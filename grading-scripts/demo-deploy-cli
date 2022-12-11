@@ -1,0 +1,90 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     demo-deply-cli - grading script for DO288 Demo ch08s05
+#
+# SYNOPSIS
+#     demo-deploy-cli {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular demo of awesomeness.
+#
+# CHANGELOG
+#   * Thu Nov 28 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - Initial commit
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='deploy-cli'
+title='Demo: Managing Application Deployments with CLI commands'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp_grab_lab_files 'no-solution'
+
+  ocp_print_prereq_header
+
+  ocp_check_openshift_up
+  ocp_check_git_repo_exists 'node-version'
+  ocp_check_image_exists 'rhscl/nodejs-6-rhel7'
+
+  ocp_login_developer
+  print_line ' Creating the starter project:'
+  pad ' · Create the deploy-cli project'
+  if oc new-project deploy-cli
+  then
+      print_SUCCESS
+  else
+      print_FAIL
+  fi
+
+  print_line ' Cloning the git repository for the project:'
+  pad ' · Cloning the Git repository '
+  rm -rf /home/student/node-version
+  git clone http://services.lab.example.com/node-version /home/student/node-version
+  if [ -d "/home/student/node-version" ]
+  then
+      print_SUCCESS
+      chown -R student:student /home/student/node-version
+  else
+      print_FAIL
+  fi
+
+  ocp_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp_print_cleanup_header
+
+  ocp_cleanup_lab_files 'no-solution'
+
+  ocp_delete_project "${this}"
+
+  ocp_print_cleanup_footer
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

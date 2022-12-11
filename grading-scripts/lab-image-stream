@@ -1,0 +1,75 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-image-stream - grading script for DO288 ch03s06 ge
+#
+# SYNOPSIS
+#     lab-image-stream {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Wed Jun 26 2017 Fernando Lozano <flozano@redhat.com>
+#   - Updated to use the shared cluster classroom
+#   * Thu Apr 03 2019 Ravi Srinivasan <ravis@redhat.com>
+#   - updated for OCP 4.0
+#   * Thu Nov 06 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='image-stream'
+title='GE: Creating an Image Stream'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_images 'redhattraining/hello-world-nginx'
+
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}" "${RHT_OCP4_DEV_USER}-common"
+
+  #XXX are there any lab files?
+  #ocp4_print_setup_header
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}" "${RHT_OCP4_DEV_USER}-common"
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

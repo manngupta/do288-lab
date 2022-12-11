@@ -1,0 +1,272 @@
+#!/usr/bin/bash
+
+# CHANGELOG
+#   * Tue Aug 18 Jaime Ramirez <jaime.ramirez@redhat.com>
+#   - Remove default values. They can be confusing
+#   - Remove cluster id variable. Not used
+#   - Match up key names exactly with the ones in the course
+#   - Remove prompts for inferred values
+#   - Save config values inmediately after they are read, so that students do not need to retype everything.
+#   - Add message showing the config file path
+#   * Wed May 31 Fernando Lozano <flozano@redhat.com>
+#   - Add validation for GitHub account name
+#   - Add validation for Quay.io account name
+#   - Add validation for Nexus server
+#   * Wed May 29 Fernando Lozano <flozano@redhat.com>
+#   - Change order of prompts, so all info related to the OpenShift cluster is together
+#   * Mon May 20 Fernando Lozano <flozano@redhat.com>
+#   - Add a 'mode variable' that asks for a different sets of variables for 'development' and 'administration' courses
+#   - Add variable for nexus and developer user name and password
+#   - Add variable for github.com and quay.io account names
+#   - Add variable for nexus host name
+#   * Wed May 02 Fernando Lozano <flozano@redhat.com>
+#   - Add variable for the bastion host; assumes a bastion that accepts the same key as any course VM
+#   - Comment out API_DOMAIN variable: it creates the risk of having two valid ways of referring to services VM, registry, and so on
+#   * Wed May 01 Razique Mahroua <rmahroua@redhat.com>
+#   - Add API_DOMAIN variable
+#   * Mon Apr 29 Razique Mahroua <rmahroua@redhat.com>
+#   - Fix for cluster check
+#   * Tue Apr 26 Fernando Lozano <flozano@redhat.com>
+#   - Add variables for the services VM hostname and its registry alias
+#   * Tue Apr 25 Fernando Lozano <flozano@redhat.com>
+#   - Save copy of the kubeadmin auth files at ~student/auth for use by exercises
+#   - Do NOT fail if the admin user and password are invalid
+#   * Tue Apr 17 Fernando Lozano <flozano@redhat.com>
+#   - Add check for the Master API URL which does not require valid credentials
+#   * Tue Apr 09 Fernando Lozano <flozano@redhat.com>
+#   - Remove cluster version variable
+#   - Add wildcard domain variable
+#   * Fri Apr 05 Fernando Lozano <flozano@redhat.com>
+#   - initial version
+
+# timeout for HTTP connections using curl and oc login, in seconds
+TIMEOUT=6
+
+
+function closest {
+  # We check first if hosts are alive, and then we don't do much error checking.
+  # This should cover the most common errors. If a host goes down between the first
+  # and second fping, this might produce incorrect results, but that shouldn't
+  # happen frequently (whereas a host being permanently down should be "normal").
+
+  ALIVE=$(fping -a "$@")
+  if test -z "$ALIVE" ; then
+    logger -s no hosts alive in "$@"
+    exit 1
+  fi
+
+  fping -q -e -c 5 $ALIVE 2>&1 | sort -g -t / -k8,8 | head -1 | cut -f 1 -d " "
+}
+
+
+
+function lab_config {
+  export RHT_OCP4_CONFIG=/usr/local/etc/ocp4.config
+
+  master_api="https://api.ocp4.example.com:6443/"
+
+  ### Initialize reasonable defaults for most variables
+
+  # Derive default values for wildcard domain from the master api URL
+  api_hostname=$( echo "${master_api}" | sed -e 's/[^/]*\/\/\([^@]*@\)\?\([^:/]*\).*/\2/' )
+  api_domain=$( echo "${api_hostname}" | sed -e 's/[^.]*\.//' )
+  wildcard_domain="apps.${api_domain}"
+  nexus_server=nexus-common.apps.na410.prod.nextcle.com
+  mysql_server=mysql.ocp-na46a.prod.ole.redhat.com
+
+  # These variables are used only by development courses
+
+  # developer user from IdM (or other IdP)
+  dev_user=developer
+  dev_passwd=developer
+
+  # These variables are used only by administration courses
+
+  # Save two copies of the kubeadmin auth files: one for lab scripts, other for
+  # commands the student types in exercises
+  local kube_auth_src="${RHT_OCP4_KUBEAUTH_SRC:-/home/student/Dowloads/auth.zip}"
+  local kube_auth_lab="${RHT_OCP4_KUBEAUTH_LAB:-/root/auth}"
+  local kube_auth_user="${RHT_OCP4_KUBEAUTH_USER:-/home/student/auth}"
+
+  # IMPORTANT: the copy at RHT_OCP4_KUBEAUTH_LAB exists so lab scripts continue
+  # working in the event that a student messes with his $HOME/auth copy of
+  # kubeconfig and kubeadmin-password
+
+  # admin user from htpasswd (or other IdP) is optional
+  admin_user="admin"
+  admin_passwd="redhat"
+
+  # Derive default values for services vm, private registry, and bastion host from the master api URL
+  # local services_vm="${RHT_OCP4_SERVICES_VM:-services.${api_domain}}"
+  # local priv_registry="${RHT_OCP4_PRIV_REGISTRY:-registry.${api_domain}}"
+  local bastion_host="${RHT_OCP4_BASTION_HOST:-bastion.${api_domain}}"
+
+  ### Continue taking input from students
+
+  # readline ocp_version 'OpenShift version'
+
+  save_variable github_user 'GitHub Account Name'
+  save_variable quay_user 'Quay.io Account Name'
+
+  echo
+  echo "Finding closest Nexus host"
+  nexus_server=$(closest nexus-common.apps.na410.prod.nextcle.com nexus-common.apps.eu410.prod.nextcle.com nexus-common.apps.ap410.prod.ole.redhat.com)
+  if [ $? != 0 ]
+  then
+    echo Search failed, falling back to nexus-common.apps.na410.prod.nextcle.com
+    nexus_server=nexus-common.apps.na410.prod.nextcle.com
+  fi
+
+  local region=$(echo $nexus_server | cut -d . -f 3 | cut -c 1-2)
+  mysql_server=mysql.ocp-${region}46a.prod.ole.redhat.com
+
+  ### Display data provided by the student
+
+  echo
+  echo 'You entered:'
+  echo -e " · GitHub Account Name:\t\t\t${github_user}"
+  echo -e " · Quay.io Account Name:\t\t${quay_user}"
+  ### Display generated config
+
+  echo
+  echo 'Generated config:'
+
+  echo -e " · Nexus Server Host:\t\t\t${nexus_server}"
+  echo -e " · MySQL Server Host:\t\t\t${mysql_server}"
+  echo -e " · GitHub Account Name:\t\t\t${github_user}"
+  echo -e " · Quay.io Account Name:\t\t${quay_user}"
+
+  ### Verifying data from students
+
+  echo
+  echo 'Verifying your Nexus host...'
+  local nexus_frozen=$(curl --connect-timeout "${TIMEOUT}" -s --header 'Accept: application/json' "http://${nexus_server}/service/rest/v1/read-only" | jq ".frozen")
+  if [ "${nexus_frozen}" != "false" ]
+  then
+    fatal 5 "Cannot find a Nexus server at http://${nexus_server}."
+  fi
+
+  #XXX surprisingly, this GitHub API works unauthenticated
+  # https://developer.github.com/v3/search/#search-users
+  echo
+  echo 'Verifying your GitHub account name...'
+  local github_user_name=$(curl --connect-timeout "${TIMEOUT}" -sk "https://api.github.com/search/users?q=${github_user}" | jq -r ".items[] | select(.type == \"User\") | select(.login == \"${github_user}\") | .login")
+  if [ "${github_user_name}" != "${github_user}" ]
+  then
+    fatal 5 "Cannot find a GitHub account named: ${github_user}."
+  fi
+
+  #XXX surprisingly, this Quay.io API works unauthenticated
+  # https://docs.quay.io/api/swagger/#!/user/getUserInformation
+  echo
+  echo 'Verifying your Quay.io account name...'
+  local http_status=$( curl --connect-timeout "${TIMEOUT}" -sk -o /dev/null -w '%{http_code}' "https://quay.io/api/v1/users/${quay_user}" )
+  if [ "${http_status}" != "200" ]
+  then
+    fatal 5 "Cannot find a Quay.io account named: ${quay_user}."
+  fi
+
+  echo
+  echo 'Saving your lab configuration file...'
+
+  save_config
+
+  ### Tell students we are done
+
+  echo
+  echo -e '\e[32m\e[1mAll fine, lab config saved. You can now proceed with your exercises.\e[0m'
+  echo
+  echo -e "If you need to modify the configuration, rerun this script or directly modify the values in \e[1m${RHT_OCP4_CONFIG}\e[0m."
+  echo
+}
+
+
+function error {
+  echo -e "\e[91m$@\e[0m" 1>&2
+}
+
+
+function fatal {
+  local code="$1"
+
+  rm -rf "${kube_auth_tmp}"
+  error ''
+  error '\e[1mERROR:'
+
+  while [ "$2" != "" ]; do
+    error "$2"
+    shift
+  done
+
+  exit $code
+}
+
+
+function save_variable {
+  local variable_name="$1"
+  local prompt_msg="$2"
+
+  readline $variable_name "$prompt_msg"
+
+  save_config
+}
+
+
+function readline {
+  local return_var="$1"
+  local prompt_msg="$2"
+
+  local input_line=''
+
+  while [ "${input_line}" = '' ]; do
+    echo -n
+    read -e -p " · Enter the ${prompt_msg}: " -i "${!return_var}" input_line
+    if  [ "${input_line}" = '' ]; then
+      echo "   ${prompt_msg} cannot be empty. Try again."
+    fi
+  done
+
+  eval $return_var="'${input_line}'"
+}
+
+
+function save_config {
+  if ! sudo touch "${RHT_OCP4_CONFIG}"
+  then
+    fatal 99 "Cannot save your lab configuration."
+  fi
+
+  sudo bash -c "cat <<EOF > ${RHT_OCP4_CONFIG}
+RHT_OCP4_MASTER_API=${master_api}
+RHT_OCP4_WILDCARD_DOMAIN=${wildcard_domain}
+EOF"
+
+  sudo bash -c "cat <<EOFDEV >> ${RHT_OCP4_CONFIG}
+RHT_OCP4_NEXUS_SERVER=${nexus_server}
+RHT_OCP4_MYSQL_SERVER=${mysql_server}
+RHT_OCP4_DEV_USER=${dev_user}
+RHT_OCP4_DEV_PASSWORD=${dev_passwd}
+RHT_OCP4_GITHUB_USER=${github_user}
+RHT_OCP4_QUAY_USER=${quay_user}
+EOFDEV"
+}
+
+
+if ! which oc &>/dev/null
+then
+  fatal 1 "Cannot find the 'oc' command in your PATH"
+fi
+
+echo
+echo 'This script configures the connection parameters to access the OpenShift cluster for your lab scripts'
+echo
+
+if [ "$1" != "-d" -a "$1" != "" ]; then
+  echo "Usage: $( basename $0 ) [-h|-d]"
+  echo
+  echo -e "  -h: displays this help message"
+  echo -e "  -d: start from defaults instead of starting from last saved config"
+  echo
+else
+  lab_config "$@"
+fi

@@ -1,0 +1,201 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-todo-migrate - grading script for DO288 ch08s07 lab
+#
+# SYNOPSIS
+#     lab-todo-migrate {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#        grade   - grande the work done by the student
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Wed Jul 24 2019 Dan Kolepp <dkolepp@redhat.com>
+#   - Changes for OCPv4
+#   * Wed Jan 3 2018 Douglas Silva <dsilva@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='todo-migrate'
+title='Lab: Building Applications for OpenShift'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function ocp4_verify_prereq_git_projects_main {
+  # vararg
+  local folder="$1"
+
+  while [ "${folder}" != "" ]
+  do
+
+    ocp4_pad "Project '${folder}' exists in student's GitHub fork"
+    if ocp4_check_github_repo_exists "DO288-apps" "${folder}" "main"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+
+    shift
+    folder="$1"
+  done
+}
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_git_projects_main 'todo-api'
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+
+  ocp4_print_setup_footer
+
+}
+
+function lab_grade {
+
+  ocp4_print_prereq_header
+  ocp4_login_as_developer
+
+  ocp4_print_grade_header
+  pad " OpenShift tododb service exists"
+  if oc project "${RHT_OCP4_DEV_USER}-${this}" && oc get svc tododb
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+
+  print_line ' Checking deployed todo application'
+  ocp4_pad "Project (${RHT_OCP4_DEV_USER}-${this}) exists"
+  if oc project "${RHT_OCP4_DEV_USER}-${this}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+  local app='todo-api'
+  ocp4_pad "Build is using a Binary input source"
+  local bc="${app}-s2i"
+  local _type="Binary"
+
+  local uri=$(oc get bc "${bc}" -o jsonpath='{.spec.source.type}')
+  if [ "${uri}" = "${_type}" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+    print_line "Build config does not use a Binary input source"
+  fi
+
+  ocp4_pad "Latest '${app}' build is successful"
+  ocp4_pass_if_last_build_complete "${bc}"
+
+
+  ocp4_pad "Application pod is ready and runnning"
+  if ocp4_check_pod_ready_and_running "${RHT_OCP4_DEV_USER}-${this}" "app=$app"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Application pod uses a ConfigMap"
+  if oc get pods -l "app=$app" -o name
+  then
+    if [ "$(oc get pods -l "app=$app" -o name | wc -l)" == "1" ]; then
+      podname=$(oc get pods -l "app=$app" -o name)
+      configmap=$(oc get $podname -o jsonpath="{.spec.containers[0].envFrom[0].configMapRef.name}")
+      if [ "$?" == "0" ]; then
+        echo "The config map is: $configmap"
+        print_PASS
+      else
+        print_FAIL
+        print_line "The $podname pod is not configured with a config map"
+        print_line "Ran command: oc get $podname -o jsonpath='{.spec.containers[0].envFrom[0].configMapRef.name}'"
+      fi
+    else
+      print_FAIL
+      print_line "More than one application pod found with label: app=$app"
+    fi
+  else
+    print_FAIL
+    print_line "Unable to find application pod"
+  fi
+
+  for variable in DATABASE_USER DATABASE_PASSWORD DATABASE_SVC_HOSTNAME DATABASE_NAME; do
+    ocp4_pad "The ConfigMap contains the $variable variable"
+    val=$(oc get cm $configmap -o jsonpath="{.data.$variable}")
+    if [ "$?" == "0" ]; then
+      if [ "${#val}" != "0" ]; then
+        print_PASS
+      else
+        print_FAIL
+        print_line "The $variable variable does not have the correct value."
+      fi
+    else
+      print_FAIL
+      print_line "Unable to find the $variable variable in the $configmap ConfigMap"
+    fi
+  done
+
+
+  pad " · Application API can connect to the database"
+  local hostname="${app}-${RHT_OCP4_DEV_USER}-${this}.${RHT_OCP4_WILDCARD_DOMAIN}"
+  if ocp4_check_http_status '200' "http://${hostname}/todo/api/items/6"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  print_line
+  ocp4_print_grade_footer
+
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_cleanup_lab_files
+  ocp4_verify_local_clone_clean
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

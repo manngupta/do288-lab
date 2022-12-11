@@ -1,0 +1,186 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-build-app - grading script for DO288 ch04s09 lab
+#
+# SYNOPSIS
+#     lab-build-app {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#        grade   - grande the work done by the student
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Thu Apr 12 2019 Ravi Srinivasan <ravis@redhat.com>
+#   - Updated for OCP 4
+#   * Thu Nov 16 2017 Douglas Silva <dsilva@redhat.com>
+#   - original code
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='build-app'
+title='Lab: Building applications'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function lab_start {
+
+  project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_prereq_header
+  ocp4_is_cluster_up  
+  # The local clone is not necessary, as
+  #  as not local changes are made to the source
+  #  in this lab.
+  #ocp4_verify_local_clone_exist
+
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_nexus_repositories 'nodejs'
+  ocp4_verify_prereq_git_projects 'build-app'
+  ocp4_fail_if_project_exists "${project}"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files 'no-solution'
+
+  ocp4_print_setup_footer
+
+}
+
+function lab_finish {
+  # This is not defined at the top, but in
+  # the "start" function.  It must be 
+  # defined here as a result...
+  project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_cleanup_header
+
+  ocp4_cleanup_lab_files 'no-solution'
+
+  ocp4_login_as_developer
+
+  #XXX displays nothing if the project does not exist
+  echo "Attempting to remove project: ${project}"
+  ocp4_delete_project "${project}"
+
+  ocp4_delete_project 'common'
+
+  ocp4_print_cleanup_footer
+}
+
+function lab_grade {
+  project="${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_print_grade_header
+
+  ocp4_login_as_developer
+
+  pad " · Project '${project}' exists"
+  if oc project "${project}"
+    then
+      print_PASS
+    else
+      print_FAIL
+      print_line "Failed to enter project '${project}' as the developer user"
+  fi
+
+
+  ocp4_exit_on_failure
+
+  local app='simple'
+
+  pad " · Build config '${app}' points to correct git repo"
+  local repo="https://github.com/${RHT_OCP4_GITHUB_USER}/DO288-apps/build-app"
+  local uri=$(oc get bc "${app}" -o jsonpath='{.spec.source.git.uri}/{.spec.source.contextDir}')
+  if [ "${uri}" == "${repo}" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+    print_line "Build config does not point to '${repo}'"
+  fi
+
+  pad " · Lastest '${app}' build is successful"
+  ocp4_pass_if_last_build_complete "${app}"
+
+  local pod=$(oc get pod -l "deployment=${app}" -o name --no-headers)
+
+  pad " · Pod '${app}' is ready and runnning"
+  ocp4_pass_if_pod_is_ready_and_running "${pod}"
+
+  pad " · Pod '${app}' logs shows application is started"
+  local matches=$(oc logs "${pod}" | grep 'Simple app for the Building Applications Lab!')
+  if [ "${matches}" != "" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  pad " · Get application hostname"
+  hostname=$(oc get route/simple -o jsonpath='{.spec.host}')
+
+  if [ "${hostname}" != "" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  local msg='Simple app for the Building Applications Lab!'
+  pad " · Application '${app}' returns the correct message"
+  local match=$(curl -s "${hostname}" | grep "${msg}")
+  if [ "${match}" != "" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  pad " · Build started using a generic webhook"
+  pass_if_cause "WebHook"
+
+  pad " · Build started manually"
+  pass_if_cause "Manually"
+
+  ocp4_print_grade_footer
+}
+
+function pass_if_cause
+{
+  CAUSE=$1
+  BUILDS=`oc get builds --no-headers | cut -d " " -f 1`
+  HAS_CAUSE="false"
+  for i in $BUILDS; do
+    oc describe build $i | grep cause | grep $CAUSE
+      if [ "$?" == "0" ] ; then
+        HAS_CAUSE="true"
+      fi
+  done
+
+  if [ "$HAS_CAUSE" == "true" ] ; then
+    print_PASS
+  else
+    print_FAIL
+  fi
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

@@ -1,0 +1,1197 @@
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     labtool.do288.shlib - lab grading script do288 function library
+#     See maintainer guidelines and usage hits at:
+#     https://docs.google.com/document/d/1HKX0FUfpF9K38H6ZY1tIIHvM6xd5DWoUwXltOMJezIo/edit#heading=h.1r2krg5gzo7i
+#
+# SYNOPSIS
+#     Add the following line at the top of your script:
+#
+#        source /path/to/labtool.do288.shlib
+#
+#     *after* the source of the generic labtool.shlib
+#
+# DESCRIPTION
+#
+# CHANGELOG
+#   * Mon Aug 15 Michael Jarrett <mjarrett@redhat.com>
+#   - Add ocp4_is_cluster_up_do288
+#   - Add ocp4_login_as_dmin
+#   - Add ocp4_restart_package_server_if_required
+#   - Add test_ocp4_login
+#   - Add ocp4_check_api
+#   - Add grab_kubeconfig
+#   - Add set_KUBEADM_PASSWORD
+#   * Mon Jul 15 Ivan Chavero <ichavero@redhat.com>
+#   - Add missing ocp4_pass_if_last_build_complete
+#   - Add ocp4_pass_if_pod_is_ready_and_running
+#   * Tue Jun 25 Fernando Lozano <flozano@redhat.com>
+#   - New functions ocp4_wait and ocp4_wait_build to spin while waiting
+#   * Mon Jun 24 Fernando Lozano <flozano@redhat.com>
+#   - Replace ocp_pass_if_last_build_complete with ocp4_check_latest_build_complete
+#   - Delete trivial function ocp_pass_if_bc_points_to_git_repo
+#   - Delete trivial function ocp_pass_if_pod_logs_match
+#   - Delete trivial function ocp_pass_if_configmap_matches_key_value
+#   * Wed Jun 19 Fernando Lozano <flozano@redhat.com>
+#   - Improve ocp4_delete_project to wait until a project is really gone
+#   - Rename ocp4_stop_delete_container to ocp4_delete_stop_container
+#   - New convenience function ocp4_verify_files_available_from_url
+#   - Delete trivial function ocp4_check_file_available_from_url
+#   - Delete trivial function ocp_pass_if_project_exists
+#   - Delete trivial functions ocp_pass_if_not_equals and ocp_pass_if_equals
+#   - Delete trivial function ocp_success_if_script
+#   - Delete trivial functions ocp_pass_if_not_equals ocp_pass_if_equals
+#   - Delete trivial function ocp_success_if_script
+#   - Delete trivial function ocp_pass_if_route_hostname
+#   - Delete trivial function ocp_pass_if_url_matches
+#   * Tue Jun 13 Fernando Lozano <flozano@redhat.com>
+#   - Add functions ocp4_stop_delete_container and ocp4_delete_local_image
+#   * Tue Jun 13 Fernando Lozano <flozano@redhat.com>
+#   - Add convenience function ocp4_fail_if_container_exists
+#   * Tue Jun 06 Fernando Lozano <flozano@redhat.com>
+#   - Add global 'command not found' handler
+#   - Merge with new functions from Ravi (ch02 lab)
+#   - Group the functions copied from old shlib as needing refactoring
+#   * Tue May 30 Ivan Chavero <ichavero@redhat.com>
+#   - Add ocp4_pass_if_bc_points_to_git_repo
+#   - Add ocp4_pass_if_last_build_complete
+#   - Add ocp4_pod_from_dc
+#   - Add ocp4_pass_if_not_equals
+#   - Add ocp4_pass_if_route_hostname
+#   - Add ocp4_pass_if_equals
+#   * Tue May 28 Ivan Chavero <ichavero@redhat.com>
+#   - Add ocp4_check_nexus_npm for checking npm modules
+#   * Mon Jun 03 2019 Fernando Lozano <flozano@redhat.com>
+#   - Add function ocp4_check_nexus_repository_exists check for an existing Nexus repository mirror
+#   * Thu Mar 23 Fernando Lozano <flozano@redhat.com>
+#   - New functions ocp4_verify_local_clone_exist and ocp4_verify_local_clone_clean to ensure student can switch branches on each exercise
+#   * Wed Mar 22 Fernando Lozano <flozano@redhat.com>
+#   - Started general refactoring, removed all old stuff. New functions will be either copied or created on-demand
+#   - When copying stuff, prefer to look at DO292 and DO425 which are newer. The old DO288 shlib is saved as .old
+#   * Tue Mar 21 Fernando Lozano <flozano@redhat.com>
+#   - Changes required by the shared AWS classroom
+#   * Thu Mar 7 Ricardo Jun <jtaniguc@redhat.com>
+#   - Various changes (usage of pad/ print line)
+#   * Fri Jun 18 Razique Mahroua <rmahroua@redhat.com>
+#   - Various changes (usage of pad/ print line)
+#   * Fri Mar 17 2017 Jim Rigsbee <jrigsbee@redhat.com>
+#   - Initial revision
+
+# vim: ts=2 sw=2
+
+
+##########################################################################
+## Shared AWS Instance classroom
+## IMPORTANT: Keep this in sync with the lab-configure script
+##########################################################################
+
+RHT_OCP4_CONFIG=/usr/local/etc/ocp4.config
+
+source ${RHT_OCP4_CONFIG} &>/dev/null
+
+
+##########################################################################
+## Global variables
+## Those need to be customized for each course
+## Each script also needs do define:
+## - this: exercise's folder name (equal do grading script name)
+## - title: exercise's title
+##########################################################################
+
+COURSE="DO288"
+COURSE_HOME="/home/student/${COURSE}"
+
+
+##########################################################################
+## Global variables
+## Those are used by the functions and should not require customization
+##########################################################################
+
+labs="${COURSE_HOME}/labs"
+solutions="${COURSE_HOME}/solutions"
+curl_save='curl -L -s -S -o'
+materials="http://materials.example.com"
+contents="http://content.example.com"
+local_clone="/home/student/${COURSE}-apps"
+
+TIMEOUT=6
+DEFAULT_GIT="github.com/${RHT_OCP4_GITHUB_USER}"
+DEFAULT_REGISTRY="quay.io"
+
+
+#########################################################################
+## Generic functions
+## Those should be reusable without changes by other courses
+## - May print header and pad messages
+##########################################################################
+
+function ocp4_is_cluster_up {
+
+  print_line ' Verify the OpenShift cluster is running:'
+
+  ocp4_check_api
+
+  grab_kubeconfig
+  if [ $? -eq 0 ]
+  then
+    local SYSTEM_ADMIN="--kubeconfig=/root/.kubeconfig --insecure-skip-tls-verify"
+  else
+    ocp4_login_as_admin
+  fi
+
+  for node in $(oc ${SYSTEM_ADMIN} get node -o jsonpath="{.items[*].metadata.name}" -l node-role.kubernetes.io/master); do
+    pad2 "Control plane node '${node}' is ready"
+    local status=$(oc ${SYSTEM_ADMIN} get node ${node} -o jsonpath="{.status.conditions[?(@.type=='Ready')].status}")
+    if [ "${status,,}" = "true" ]; then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+  done
+}
+
+
+function ocp4_login_as_admin {
+  set_KUBEADM_PASSWD
+  test_ocp4_login kubeadmin $(grep KUBEADM_PASSWD /usr/local/etc/ocp4.config | cut -d= -f2) silent
+  if [ $? -eq 0 ]
+  then
+    /usr/bin/oc login -u kubeadmin -p $(grep KUBEADM_PASSWD /usr/local/etc/ocp4.config | cut -d= -f2) https://api.ocp4.example.com:6443 --insecure-skip-tls-verify
+  else
+    test_ocp4_login kubeadmin $(grep KUBEADM_PASSWD /usr/local/etc/ocp4.config | cut -d= -f2)
+  fi
+}
+
+function opc4_restart_package_server_if_required {
+  ocp4_login_as_admin
+
+  if ! oc api-resources ; then
+    pad2 "Restarting package server"
+    oc delete -n openshift-operator-lifecycle-manager $(oc get pod -n openshift-operator-lifecycle-manager -o name | grep packageserver)
+    print_SUCCESS
+  fi
+}
+
+function test_ocp4_login {
+  local USER=$1
+  local PASSWORD=$2
+  local MODE=$3
+  local PAD_MESSAGE="User '${USER}' can successfully log in to the cluster"
+  if ! grep -w ocp /etc/passwd
+  then
+    useradd ocp -r -m -c "User to test OpenShift cluster"
+  fi
+
+  if [ -n "${USER}" -a -n "${PASSWORD}" ]
+  then
+    if /usr/bin/su - ocp -c "/usr/bin/oc login -u ${USER} -p ${PASSWORD} https://api.ocp4.example.com:6443 --insecure-skip-tls-verify"
+    then
+      if [ "${MODE,,}" == "silent" ]
+      then
+        return 0
+      else
+        pad2 "${PAD_MESSAGE}"
+        print_SUCCESS
+      fi
+    else
+      if [ "${MODE,,}" == "silent" ]
+      then
+        return 1
+      else
+        pad2 "${PAD_MESSAGE}"
+        print_FAIL
+        grab_kubeconfig
+        if [ $? -eq 0 ]
+        then
+          local SYSTEM_ADMIN="--kubeconfig=/root/.kubeconfig --insecure-skip-tls-verify"
+          local API_PROGRESSING=$(oc ${SYSTEM_ADMIN} get co/kube-apiserver -o jsonpath='{range .status.conditions[?(@.type=="Progressing")]}{.status}{end}')
+          if [ "${API_PROGRESSING,,}" == "true" ]
+          then
+            print_line
+            print_line "   User '${USER}' cannot log in because the 'kube-apiserver'"
+            print_line "   cluster operator has a status of Progressing=True."
+            print_line "   Monitor the 'kube-apiserver' cluster operator with:"
+            print_line "   $ sudo watch oc --kubeconfig=/root/.kubeconfig \\"
+            print_line "     --insecure-skip-tls-verify get co/kube-apiserver"
+          fi
+        fi
+      fi
+    fi
+  else
+    # The function was run without passing parameters for the USERNAME and PASSWORD.
+    echo "The test_ocp4_login function expects both a username and password to be passed." 1>&2
+    echo "Usage: test_ocp4_login USERNAME PASSWORD [silent]" 1>&2
+    return 1
+  fi
+}
+
+
+function ocp4_check_api {
+  LOGIN_URL="https://console-openshift-console.apps.ocp4.example.com/auth/login"
+  # Wait for routers pods to successfully redirect requests
+  if curl -fsSo /dev/null "${LOGIN_URL}"
+  then
+    pad2 "Router pods are available"
+    print_SUCCESS
+  else
+    # Only display the pad2 message if the curl command fails
+    pad2 "Waiting up to 20 minutes for router pods to be available"
+    local ROUTER_COUNT=0
+    local ROUTER_COUNT_LIMIT=120
+    local ROUTER_AVAILABLE="false"
+    while [ ${ROUTER_COUNT} -lt ${ROUTER_COUNT_LIMIT} ]
+    do
+      if curl -fsSo /dev/null "${LOGIN_URL}"
+      then
+        ROUTER_AVAILABLE="true"
+        break
+      else
+        sleep 10
+        ((ROUTER_COUNT=ROUTER_COUNT+1))
+      fi
+    done
+    if [ "${ROUTER_AVAILABLE}" == "true" ]
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+      ocp4_exit_on_failure
+    fi
+  fi
+  #
+  # This curl command (with an embedded curl command) simulates going to
+  # https://console-openshift-console.apps.ocp4.example.com, which points to
+  # https://console-openshift-console.apps.ocp4.example.com/auth/login, which
+  # redirects to https://oauth-openshift.apps.ocp4.example.ocm/oauth/authorize...
+  # which is the graphical login screen.
+  #
+  # In order for this to work, the router pods must be running in order to redirect
+  # the request to the console pods running in the openshift-console namespace.
+  # The console pods must be running in order to redirect the request to the
+  # oauth-openshift pods running in the openshift-authentication namespace.
+  # The oauth-openshift pods must be running in order to display the login screen.
+  #
+  # The check was changed for OCP 4.10 because the console redirects the user
+  # to the kubeadmin login screen if that is the only authentication provider
+  #
+  LOGIN_MESSAGE="Found|Log in with kube:admin|Log in to your account"
+  if curl -fsSL "${LOGIN_URL}" | grep -E "${LOGIN_MESSAGE}"
+  then
+    pad2 "OAuth pods are available"
+    print_SUCCESS
+  else
+    # Only display the pad2 message if the curl command fails
+    pad2 "Waiting up to 5 minutes for OAuth to be available"
+    local OAUTH_COUNT=0
+    local OAUTH_COUNT_LIMIT=30
+    local OAUTH_AVAILABLE="false"
+    while [ ${OAUTH_COUNT} -lt ${OAUTH_COUNT_LIMIT} ]
+    do
+      if curl -fsSL "${LOGIN_URL}" | grep -E "${LOGIN_MESSAGE}"
+      then
+        OAUTH_AVAILABLE="true"
+        break
+      else
+        sleep 10
+        ((OAUTH_COUNT=OAUTH_COUNT+1))
+      fi
+    done
+    if [ "${OAUTH_AVAILABLE}" == "true" ]
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+      ocp4_exit_on_failure
+    fi
+  fi
+  #
+  # Wait for API to come online
+  #
+  if [ "$(curl -k -s https://api.ocp4.example.com:6443/version?timeout=10s | jq -r '.major')" != "1" ]
+  then
+    # Only display the pad2 message if the curl command fails
+    pad2 "Waiting up to 7 minutes for the API to be available"
+    local API_COUNT=0
+    local API_COUNT_LIMIT=42
+    local API_AVAILABLE="false"
+    while [ ${API_COUNT} -lt ${API_COUNT_LIMIT} ]
+    do
+      if [ "$(curl -k -s https://api.ocp4.example.com:6443/version?timeout=10s | jq -r '.major')" == "1" ]
+      then
+        API_AVAILABLE="true"
+        break
+      else
+        sleep 10
+        ((API_COUNT=API_COUNT+1))
+      fi
+    done
+    if [ "${API_AVAILABLE}" == "true" ]
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+      ocp4_exit_on_failure
+    fi
+  else
+    pad2 "API pods are available"
+    print_SUCCESS
+  fi
+  # wait for cluster operators to stop progressing
+  grab_kubeconfig
+  local SYSTEM_ADMIN="--kubeconfig=/root/.kubeconfig --insecure-skip-tls-verify"
+  if ! oc get co $SYSTEM_ADMIN || [ $(oc get co -o json $SYSTEM_ADMIN | jq '.items[].status.conditions[] | select((.status=="True") and (.type=="Progressing"))' | wc -l) != "0" ]
+  then
+    # Only display the pad2 message if the curl command fails
+    pad2 "Waiting up to 10 minutes for operators to stop progressing"
+    local OPERATORS_COUNT=0
+    local OPERATORS_COUNT_LIMIT=60
+    local OPERATORS_NOT_PROGRESSING="false"
+    while [ ${OPERATORS_COUNT} -lt ${OPERATORS_COUNT_LIMIT} ]
+    do
+      if oc get co $SYSTEM_ADMIN && [ $(oc get co -o json $SYSTEM_ADMIN | jq '.items[].status.conditions[] | select((.status=="True") and (.type=="Progressing"))' | wc -l) == "0" ]
+      then
+        OPERATORS_NOT_PROGRESSING="true"
+        break
+      else
+        sleep 10
+        ((OPERATORS_COUNT=OPERATORS_COUNT+1))
+      fi
+    done
+    if [ "${OPERATORS_NOT_PROGRESSING}" == "true" ]
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+      ocp4_exit_on_failure
+    fi
+  else
+    pad2 "No cluster operators are progressing"
+    print_SUCCESS
+  fi
+}
+
+function ocp4_pad {
+  pad2 "$@"
+}
+
+
+function grab_kubeconfig {
+  if ! [ -f /root/.kubeconfig ]
+  then
+    if rsync lab@utility:/home/lab/ocp4/auth/kubeconfig /root/.kubeconfig
+    then
+      return 0
+     else
+      return 1
+    fi
+  fi
+}
+
+
+function set_KUBEADM_PASSWD {
+  if ! [ -f /usr/local/etc/ocp4.config ]
+  then
+    # /usr/local/etc/ocp4.config does not exist
+    cat > /usr/local/etc/ocp4.config << EOF
+RHT_OCP4_MASTER_API=https://api.ocp4.example.com:6443
+RHT_OCP4_WILDCARD_DOMAIN=apps.ocp4.example.com
+RHT_OCP4_KUBEADM_PASSWD=$(ssh lab@utility cat /home/lab/ocp4/auth/kubeadmin-password)
+RHT_OCP4_USER_PASSWD=redhat
+EOF
+    # Make /usr/local/etc/ocp4.config immutable to prevent accidental editing or deletion
+    chattr +i /usr/local/etc/ocp4.config
+  else
+    local LINE="RHT_OCP4_KUBEADM_PASSWD=$(ssh lab@utility cat /home/lab/ocp4/auth/kubeadmin-password)"
+    if ! grep '^RHT_OCP4_KUBEADM_PASSWD' /usr/local/etc/ocp4.config
+    then
+      # /usr/local/etc/ocp4.config exists but does not include line RHT_OCP4_KUBEADM_PASSWD
+      # Remove immutability from /usr/local/etc/ocp4.config for editing
+      chattr -i /usr/local/etc/ocp4.config
+      echo "${LINE}" >> /usr/local/etc/ocp4.config
+      # Make /usr/local/etc/ocp4.config immutable to prevent accidental editing or deletion
+      chattr +i /usr/local/etc/ocp4.config
+    else
+      # /usr/local/etc/ocp4.config exists but line RHT_OCP4_KUBEADM_PASSWD does not match ${LINE}
+      if [ $(grep '^RHT_OCP4_KUBEADM_PASSWD' /usr/local/etc/ocp4.config) != "${LINE}" ]
+      then
+        # Remove immutability from /usr/local/etc/ocp4.config for editing
+        chattr -i /usr/local/etc/ocp4.config
+        sed -i "/^RHT_OCP4_KUBEADM_PASSWD/c ${LINE}" /usr/local/etc/ocp4.config
+        # Make /usr/local/etc/ocp4.config immutable to prevent accidental editing or deletion
+        chattr +i /usr/local/etc/ocp4.config
+      fi
+    fi
+  fi
+}
+
+function command_not_found_handle {
+  local command="$1"
+
+  #XXX why isn't fatal nor exit working here to cancel the script?
+  print_line
+  print_line
+  pad "Found bug in lab script?"
+  print_FAIL
+  fatal 127 "Command or function not found: '${command}'"
+  print_line
+}
+
+
+function ocp4_pad {
+  local msg="$( echo $@ | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//' )"
+  local max=60
+  local prefix=' · '
+  local len="${#msg}"
+  while [ "${len}" -ge "${max}" ]; do
+    print_line "${prefix}${msg:0:${max}}"
+    local msg="$( echo ${msg:${max}:${len}} | sed -e 's/^[[:space:]]*//' | sed -e 's/[[:space:]]*$//' )"
+    local len="${#msg}"
+    local prefix='   '
+  done
+  pad "${prefix}${msg}"
+}
+
+
+function ocp4_print_prereq_header {
+  print_header "Checking prerequisites for ${title}"
+}
+
+
+function ocp4_print_setup_header {
+  print_header "Setting up the classroom for ${title}"
+}
+
+
+function ocp4_print_setup_footer {
+  print_line
+  pad 'Overall start status'
+
+  if [[ ${fail_count} -eq 0 ]]
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+  print_line
+}
+
+
+function ocp4_print_grade_header {
+  print_header "Grading the student's work for ${title}"
+}
+
+
+function ocp4_print_grade_footer {
+  print_line
+  pad 'Overall exercise grade'
+  if [[ ${fail_count} -eq 0 ]]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  print_line
+}
+
+
+function ocp4_print_cleanup_header {
+  print_header "Completing ${title}"
+}
+
+
+function ocp4_print_cleanup_footer {
+  print_header "Please use start if you wish to do the exercise again."
+}
+
+
+function ocp4_print_noop_cleanup_footer {
+  print_header 'Please follow the exercise instructions if you want to perform optional cleanup and do the exercise again'
+}
+
+
+function ocp4_print_on_failure {
+  local msg="$1"
+
+  if [ ${fail_count} != 0 ]
+  then
+    print_line
+    print_line "${msg}"
+    print_line
+  fi
+}
+
+
+#XXX really need this one? Should use fail from the generic shlib?
+
+function ocp4_exit_on_failure {
+  local msg="$1"
+
+  if [ ${fail_count} != 0 ]
+  then
+    print_line
+    pad 'Cannot continue due to the previous errors'
+    print_FAIL
+    if [ "${msg}" != "" ]
+    then
+        print_line "${msg}"
+    fi
+    print_line
+    exit 1
+  fi
+}
+
+
+function ocp4_download_file {
+  local final_name="$1"
+  local destination="$2"
+  local url="$3"
+
+  ocp4_pad "Download ${final_name}"
+
+  if ${curl_save} "${destination}/${final_name}" "${url}" \
+      && [ -f "${destination}/${final_name}" ]
+  then
+    chown -R student:student "${destination}"
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp4_grab_lab_files
+{
+  local no_solution="$1"
+
+  #print_line " Downloading files for ${title}"
+
+  if [ -d "${labs}/${this}" ]; then
+    #print_line " Files were already been downloaded. Use finish if you want to start over."
+    #print_line
+    pad ' · Skip download of exercise and solution files'
+    print_SUCCESS
+    return
+  fi
+
+  pad ' · Download exercise files'
+  if mkdir -p "${labs}/${this}" \
+      && chown student:student "${COURSE_HOME}" \
+      && chown student:student "${labs}" \
+      && ${curl_save} ${labs}/${this}.tgz ${materials}/labs/${this}.tgz \
+      && [ -f "${labs}/${this}.tgz" ]
+  then
+    pushd ${labs}
+    if tar xzf ${this}.tgz ; then
+      rm -f ${this}.tgz
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    popd
+  else
+    print_FAIL
+  fi
+
+  chown -R student:student "${labs}/${this}"
+
+  if [ "${no_solution}" == "" ]; then
+    pad ' · Download solution files'
+    if mkdir -p "${solutions}/${this}" \
+        && chown student:student "${solutions}" \
+        && ${curl_save} ${solutions}/${this}.tgz ${materials}/solutions/${this}.tgz \
+        && [ -f "${solutions}/${this}.tgz" ]
+    then
+      pushd ${solutions}
+      if tar xzf ${this}.tgz; then
+        rm -f ${this}.tgz
+        print_SUCCESS
+      else
+        print_FAIL
+      fi
+      popd
+    else
+      print_FAIL
+    fi
+
+    chown -R student:student "${solutions}/${this}"
+  fi
+}
+
+
+function ocp4_cleanup_lab_files
+{
+  local no_solution="$1"
+
+  pad ' · Remove exercise files'
+  rm -fr ${labs}/${this}
+  print_SUCCESS
+
+  if [ "${no_solution}" == "" ]
+  then
+    pad ' · Remove solution files'
+    rm -fr ${solutions}/${this}
+    print_SUCCESS
+  fi
+}
+
+
+#XXX This functions does NOT follow the agreed conventions for the shlib and should be deleted
+#XXX it duplicates ocp4_check_pod_ready_and_running or ocp4_check_from_dc_ready_and_running in a unreliable way, using piples and text filters
+
+function ocp4_pass_if_pod_is_ready_and_running {
+  local pod="$1"
+  local pod_ready=$(oc get "${pod}" --no-headers | grep Running | grep '1/1')
+  if [ "${pod_ready}" != "" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+}
+
+##########################################################################
+## Technology functions: OpenShift (OUC) with Shared Instance Classroom
+## Those should be reusable without changes by courses using the
+## same technology and base classroom
+## Assumptions:
+## - Everything is done as the root user in workstation
+## - root@workstation authenticates to OpenShift using a regular user account
+## - lab-configure was run to set the 'dev' user credentials and master API URL
+## - All students has their own 'dev' OCP user
+## - All students also their personal githib and quay.io accounts
+## Notes
+## - Most functions assume the oc login was set by ocp4_login_as_developer
+## - Avoid printing pad and header messages
+## - ocp4_check function do not print anything
+##########################################################################
+
+
+function ocp4_login_as_developer {
+
+  # IMPORTANT: Keep this code in sync with the lab-configure script
+  ocp4_pad 'Log in on OpenShift'
+
+  if ! [ -r ${RHT_OCP4_CONFIG} ]; then
+    print_FAIL
+    print_line
+    fatal 9 'You need to perform GE "Configuring the Classroom Environment" before starting any exercise.'
+  fi
+
+  if ! curl --connect-timeout "${TIMEOUT}" -sk "${RHT_OCP4_MASTER_API}/apis/config.openshift.io/v1" &>/dev/null
+  then
+    print_FAIL
+    print_line
+    fatal 9 "Cannot connect to the OpenShift Master API. Please check your network connectivity."
+  fi
+
+  if ! oc login -u "${RHT_OCP4_DEV_USER}" -p "${RHT_OCP4_DEV_PASSWORD}" --insecure-skip-tls-verify "${RHT_OCP4_MASTER_API}" &>/dev/null
+  then
+    print_FAIL
+    print_line
+    fatal 9 "Cannot login to OpenShift using your URL and developer credentials."
+  fi
+
+  print_SUCCESS
+}
+
+
+
+function ocp4_wait {
+  local project="$1"
+  local resource="$2"
+  # optional
+  local condition="${3:-condition=available}"
+  local timeout="${4:-360s}"
+
+  oc wait "${resource}" -n "${project}" --for "${condition}" --timeout "${timeout}" &
+  local pid="$!"
+  spinner "${pid}"
+  wait "${pid}"
+}
+
+
+function ocp4_wait_build {
+  local project="$1"
+  local bc="$2"
+  # optional
+  local timeout="${2:-360s}"
+
+  # waits for the build to start
+  local lastv=$(oc get bc "${bc}" -n "${project}" -o jsonpath='{.status.lastVersion}')
+  local tries=0
+  local max=60
+  while ! oc get build "${bc}-${lastv}" -n "${project}" && [ "${tries}" -lt ${max}"" ]
+  do
+    sleep 1;
+    let tries=tries+1
+  done
+
+  # I don't want the logs, just using oc logs to wait for the build to finish
+  oc logs "bc/${bc}" -n "${project}" -f &>/dev/null &
+  local pid="$!"
+  spinner "${pid}"
+  wait "${pid}"
+
+  ocp4_check_latest_build_successful "${project}" "${bc}"
+}
+
+
+function ocp4_check_http_status {
+  local status="$1"
+  local url="$2"
+  # optional
+  local timeout="${3:-${TIMEOUT}}"
+
+  #echo "*** status: ${status}"
+  #echo "*** url: ${url}"
+  #curl --connect-timeout "${timeout}" -sk "${url}"
+
+  local http_status=$( curl --connect-timeout "${timeout}" -sk -L -o /dev/null -w '%{http_code}' "${url}" )
+  #echo "*** http_status: ${http_status}"
+  test "${http_status}" = "${status}"
+}
+
+
+function ocp4_check_image_exists {
+  local image="$1"
+  # optional
+  local registry="${2:-${DEFAULT_REGISTRY}}"
+  local timeout="${3:-${TIMEOUT}}"
+
+  local name=${image%%:*}
+  local tag=${image##*:}
+
+  #echo "*** image: ${image}"
+  #echo "*** name: ${name}"
+  #echo "*** tag: ${tag}"
+  #echo "*** registry: ${registry}"
+
+  if [ "${tag}" = "" -o "${tag}" = "${name}" ]; then
+    tag="latest"
+  fi
+
+  #XXX registry.access.redhat.com works once you add redirect (-L) to curl and ocp4_check_http_status
+  #XXX registry.redhat.io requires authentication :-(
+  #XXX quay.io public images are happy :-)
+  #echo "*** URL: https://${registry}/v2/${name}/tags/list"
+  ocp4_check_http_status '200' "https://${registry}/v2/${name}/tags/list" "${timeout}" && \
+  curl --connect-timeout "${timeout}" -sk -L "https://${registry}/v2/${name}/tags/list" | jq -e ".tags[] | select(. == \"${tag}\")"
+}
+
+
+function ocp4_check_github_repo_exists {
+  local repo="$1"
+  # optional
+  local folder="$2"
+  local branch="$3"
+  local git_user="${4:-${RHT_OCP4_GITHUB_USER}}"
+  local timeout="${5:-${TIMEOUT}}"
+
+  if [ "${branch}" = "" ]; then
+    branch='master'
+  fi
+
+  #XXX the original check for 301 was broken: it did not detect missing repos
+  #echo "*** url: https://github.com/${git_user}/${repo}/tree/${branch}/${folder}"
+  ocp4_check_http_status '200' "https://github.com/${git_user}/${repo}/tree/${branch}/${folder}" "${timeout}"
+}
+
+
+function ocp4_check_nexus_repository_exists {
+  local repository="$1"
+  # optional
+  local nexus_server="${2:-${RHT_OCP4_NEXUS_SERVER}}"
+  local timeout="${3:-${TIMEOUT}}"
+
+  ocp4_check_http_status '200' "http://${nexus_server}/repository/${repository}/" "${timeout}"
+}
+
+
+function ocp4_check_latest_build_successful {
+  local project="$1"
+  local bc="$2"
+
+  local lastv=$(oc get bc "${bc}" -n "${project}" -o jsonpath='{.status.lastVersion}')
+  #echo "*** lastv: ${lastv}"
+  local phase=$(oc get build "${bc}-${lastv}" -n "${project}" -o jsonpath='{.status.phase}')
+  #echo "*** phase: ${phase}"
+  test "${phase}" = "Complete"
+}
+
+
+function ocp4_check_pod_ready_and_running {
+  local project="$1"
+  local selector="$2"
+
+  #XXX original code did not work with Kubernetes deployments; only with OpenShift dcs
+  #XXX gets the first pod from the list
+  local pod=$(oc get pod -l "${selector}" -n "${project}" -o name --field-selector=status.phase=Running | sed 1q)
+  #echo "*** selector: ${selector}"
+  #echo "*** pod: ${pod}"
+  local pod_ready=$(oc get "${pod}" -n "${project}" -o jsonpath="{.status.conditions[?(@.type=='Ready')].status}")
+  #echo "*** pod ready: ${pod_ready}"
+  #XXX assumes the pod has a single container
+  local container_ready=$(oc get "${pod}" -n "${project}" -o jsonpath="{.status.containerStatuses[0].ready}")
+  #echo "*** container ready: ${container_ready}"
+  test "${pod_ready}" = "True" -a "${container_ready}" = "true"
+}
+
+
+function ocp4_check_pod_from_dc_ready_and_running {
+  local project="$1"
+  local dc="$2"
+
+  #echo "*** dc: ${dc}"
+  ocp4_check_pod_ready_and_running "${project}" "deploymentconfig=${dc}"
+}
+
+function ocp4_check_pod_from_deployment_ready_and_running {
+  local project="$1"
+  local deployment="$2"
+
+  #echo "*** deployment: ${deployment}"
+  ocp4_check_pod_ready_and_running "${project}" "deployment=${deployment}"
+}
+
+function ocp4_check_pod_from_deployment_ready_and_running {
+  local project="$1"
+  local d="$2"
+
+  #echo "*** deployment: ${d}"
+  ocp4_check_pod_ready_and_running "${project}" "deployment=${d}"
+}
+
+
+#XXX This functions does NOT follow the agreed conventions for the shlib and should be deleted
+#XXX it duplicates ocp4_check_latest_build_successful in a unreliable way, using piples and text filters
+
+function ocp4_pass_if_last_build_complete {
+  local bc="$1"
+
+  local last_build=$(oc get build -l "buildconfig=${bc}" -o name | tail -n 1)
+  if [ "${last_build}" != "" ]
+  then
+    local status=$(oc get "${last_build}" -o jsonpath='{.status.phase}')
+    if [ "${status}" = "Complete" ]
+    then
+      print_PASS
+    else
+      print_FAIL
+    fi
+  else
+    print_FAIL
+    print_line "Found no builds from bc '${bc}'"
+  fi
+}
+
+
+##########################################################################
+## Git repo convenience functions
+## same assumptions as the Techology functions group
+## Note: these functions may print pad messages
+##########################################################################
+
+
+function ocp4_exit_missing_apps_repo {
+
+  print_line
+  print_line 'You do not seem to have a local clone of the applications repository.'
+  print_line 'Perform the first guided exercise: "Configuring Your Classroom Environment" before starting this exercise.'
+  ocp4_exit_on_failure
+}
+
+
+function ocp4_verify_local_clone_exist {
+
+  print_line ' Checking local clone of the applications repository:'
+  ocp4_pad "Folder '${local_clone}' is a git repo"
+  if [ -d "${local_clone}/.git" ]
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+    ocp4_exit_missing_apps_repo
+  fi
+  ocp4_pad "Git repo '${local_clone}' has no pending changes"
+  cd "${local_clone}"
+  local git_status=$(git status -s)
+  if [ "${git_status}" = "" ]
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+    ocp4_exit_missing_apps_repo
+  fi
+}
+
+
+function ocp4_verify_local_clone_clean {
+
+  if [ -d "${local_clone}" ]
+  then
+    ocp4_pad "Git repo '${local_clone}' has no pending changes"
+    cd "${local_clone}"
+    local git_status=$(git status -s)
+    if [ "${git_status}" = "" ]
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+      print_line
+      print_line 'You need to either stash or commit your local changes before moving to the next exercise.'
+      print_line 'See the Appendix "Managing Git Branches" if you need help to perform these actions'
+    fi
+  fi
+}
+
+
+##########################################################################
+## Convenience functions for start verbs
+## same assumptions as the Techology functions group
+## Note: these functions loop over a vararg list and print pad messages
+## They may also print_line 'second level heading' messages
+##########################################################################
+
+
+function ocp4_verify_prereq_images {
+  # vararg
+  local image="$1"
+
+  while [ "${image}" != "" ]
+  do
+
+    ocp4_pad "Image '${image}' is available"
+    if ocp4_check_image_exists "${image}" "quay.io"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+
+    shift
+    local image="$1"
+  done
+}
+
+
+function ocp4_verify_prereq_git_projects {
+  # vararg
+  local folder="$1"
+
+  while [ "${folder}" != "" ]
+  do
+
+    ocp4_pad "Project '${folder}' exists in student's GitHub fork"
+    if ocp4_check_github_repo_exists "DO288-apps" "${folder}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+
+    shift
+    folder="$1"
+  done
+}
+
+
+function ocp4_verify_prereq_nexus_repositories {
+  # vararg
+  local module="$1"
+
+  while [ "${module}" != "" ]
+  do
+
+    ocp4_pad "Module '${module}' exists in classroom's Nexus"
+    if ocp4_check_nexus_repository_exists "${module}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+
+    shift
+    module="$1"
+  done
+}
+
+
+function ocp4_verify_files_available_from_url {
+  local prefix_url="$1"
+  # vararg
+  local short_name="$2"
+
+  while [ "${short_name}" != "" ]
+  do
+
+    ocp4_pad "Check if file '${short_name}' is available"
+    if ocp4_check_http_status '200' "${prefix_url}/${short_name}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+
+    shift
+    short_name="$2"
+  done
+}
+
+
+function ocp4_fail_if_project_exists {
+  # vararg
+  local project="$1"
+
+  print_line ' Checking for conflicts with existing OpenShift projects:'
+  while [ "${project}" != '' ]
+  do
+
+    ocp4_pad "Project '${project}' is absent"
+    if oc get project "${project}" -o name
+    then
+      print_FAIL
+    else
+      print_SUCCESS
+    fi
+
+    shift
+    project="$1"
+  done
+}
+
+
+function ocp4_fail_if_container_exists {
+  # vararg
+  local container="$1"
+
+  print_line ' Checking for conflicts with existing local containers:'
+  while [ "${container}" != '' ]
+  do
+
+    ocp4_pad "Container '${container}' is absent"
+    if podman inspect --type container --format "{{.Id}}" "${container}"
+    then
+      print_FAIL
+    else
+      print_SUCCESS
+    fi
+
+    shift
+    container="$1"
+  done
+}
+
+
+##########################################################################
+## Convenience functions for finish verbs
+## same assumptions as the Techology functions group
+## Note: these functions loop over a vararg list and print pad messages
+## but no print_line 'second-level' headers
+##########################################################################
+
+
+function ocp4_delete_project {
+  # vararg
+  local project="$1"
+
+  while [ "${project}" != "" ]
+  do
+
+    if oc get project "${project}" -o name
+    then
+      pad " · Delete OpenShift project '${project}'"
+      #XXX --wait does not work reliably for projects in OCP4.beta3
+      if oc delete project "${project}" --wait=true
+      then
+        print_SUCCESS
+
+        #XXX terminating projects are not visible to non-cluster admins :-(
+        pad " · Wait for project '${project}' to be gone"
+        local RETRIES=15
+        while [ "${RETRIES}" != 0 ]; do
+          sleep 3
+          if oc get project "${project}" -o name
+          then
+            # do nothing
+            true
+          else
+            print_SUCCESS
+            break
+          fi
+          let RETRIES=RETRIES-1
+        done
+        if [ "${RETRIES}" = 0 ]; then
+          print_FAIL
+          print_line 'Too many tries, giving up'
+        fi
+
+      else
+        print_FAIL
+      fi
+    fi
+
+    shift
+    project="$1"
+  done
+}
+
+
+function ocp4_delete_stop_container {
+  # vararg
+  local container="$1"
+
+  while [ "${container}" != "" ]
+  do
+
+    if podman inspect --type container --format "{{.Id}}" "${container}"
+    then
+      ocp4_pad "Stop and remove container '${container}'"
+      podman stop "${container}"
+      if podman rm "${container}"
+      then
+        print_SUCCESS
+      else
+        print_FAIL
+      fi
+    fi
+
+    shift
+    container="$1"
+  done
+}
+
+
+function ocp4_delete_local_image {
+  # vararg
+  local image="$1"
+
+  while [ "${image}" != "" ]
+  do
+
+    if podman inspect --type image --format "{{.Id}}" "${image}"
+    then
+      ocp4_pad "Remove container image '${image}'"
+      local id=$(podman inspect --type image --format "{{.Id}}" "${image}")
+      if podman rmi -f "${id}"
+      then
+        print_SUCCESS
+      else
+        print_FAIL
+      fi
+    fi
+
+    shift
+    image="$1"
+  done
+}
+
+
+##########################################################################
+## Functions in need of refactoring
+## these are copy-and-paste from the old shlib
+## me may decide not to use some of them and instead code inline
+## DO NOT use the 'ocp4_' prefix. This is reserved for functions that were refactored
+##########################################################################

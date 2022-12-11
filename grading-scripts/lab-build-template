@@ -1,0 +1,81 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-build-template - grading script for DO288 ch01s08 ge
+#
+# SYNOPSIS
+#     lab-build-template {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab finish
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does start, grading,
+#     finish, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Mon May 27 2019 Fernando Lozano <flozano@redhat.com>
+#   - updated for the shared instance clasroom
+#   * Mon Mar 25 2019 Richard Allred <rallred@redhat.com>
+#   - updates for ocp4
+#   * Thu Oct 18 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='build-template'
+title='GE: Managing an Application with the CLI'
+
+
+# This defines which subcommands are supported (start, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_git_projects 'quotes'
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files 'no-solution'
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_cleanup_lab_files 'no-solution'
+
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-common"
+  #XXX no need to verify local clone, this GE makes no changes to source code
+  #ocp4_verify_local_clone_clean
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

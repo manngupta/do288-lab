@@ -1,0 +1,141 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-expose-image - grading script for DO288 ch03s07 lab
+#
+# SYNOPSIS
+#     lab-expose-image {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish  - perform post-lab cleanup
+#        grade   - grande the work done by the student
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does start, grading,
+#     finish, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Tue Apr 09 2019 Ravi Srinivasan <ravis@redhat.com>
+#   - Updated for OCP 4
+#   * Thu Nov 06 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='expose-image'
+title='Lab: Publishing Enterprise Container Images'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function lab_start {
+
+  grab_lab_files 'no-solution'
+
+  ocp_print_prereq_header
+
+  ocp_is_running
+  ocp4_login_as_admin
+
+  ocp_success_if_package_in_yum_repo 'skopeo'
+
+  local image_name="php-info"
+  local image_url="${contents}/ocp4.5/x86_64/installers/${image_name}-oci.tar.gz"
+
+  print_line ' Checking custom container images:'
+
+  pad " · OCI container image '${image_name}' is available"
+  ocp_check_http_status "${image_url}" '200 OK'
+
+  pad " · Download OCI container image folder '${image_name}'"
+  ${curl_save} "${labs}/${this}/${image_name}-oci.tar.gz"  "${image_url}"
+  cd "${labs}/${this}"
+  if tar xzf "${image_name}-oci.tar.gz"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+  rm "${image_name}-oci.tar.gz"
+
+  ocp_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp_print_cleanup_header
+
+  ocp_cleanup_lab_files 'no-solution'
+
+  login_openshift
+  ocp_delete_project "${this}"
+  ocp_delete_project 'common'
+
+  ocp_print_cleanup_footer
+}
+
+
+function lab_grade {
+
+  ocp_print_grade_header
+
+  login_openshift
+
+  pad " · Project 'common' exists"
+  ocp_pass_if_project_exists 'common'
+  ocp_exit_on_failure
+
+  local imageurl='image-registry.openshift-image-registry.svc:5000/common/php-info'
+
+  pad " · Image stream 'php-info' points to the correct image"
+  ocp_pass_if_is_points_to_image 'php-info' "${imageurl}"
+  ocp_exit_on_failure
+
+  local app='info'
+
+  print_line
+  print_line " Application '${app}' is deployed"
+
+  pad " · Project '${this}' exists"
+  ocp_pass_if_project_exists "${this}"
+  ocp_exit_on_failure
+
+  pad " · DC '${app}' points to the correct image"
+  ocp_pass_if_dc_points_to_image "${app}" "registry.lab.example.com/common/php-info"
+
+  local pod=$(ocp_pod_from_dc "${app}")
+
+  pad " · Pod '${app}' is ready and runnning"
+  ocp_pass_if_pod_is_ready_and_running "${pod}"
+
+  local hostname='info.apps.cluster.lab.example.com'
+
+  pad " · Route '${app}' points to the correct hostname"
+  ocp_pass_if_route_hostname "${app}" "${hostname}"
+
+  local msg='phpinfo'
+  pad " · Application '${app}' returns the '${msg}' message"
+  ocp_pass_if_url_matches "http://${hostname}" "${msg}"
+
+  ocp_print_grade_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

@@ -1,0 +1,76 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-deploy-image - grading script for DO288 ch01s06 GE
+#
+# SYNOPSIS
+#     lab-deploy-image {start|cleanup}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does start or finish for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Thu Mar 21 2019 Richard Allred <rallred@redhat.com>
+#   - updates for ocp4
+#   * Thu Oct 09 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='deploy-image'
+title='GE: Managing an Application with the Web Console'
+
+
+# This defines which subcommands are supported (start, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+  # this GE does not use a git repo
+  ocp4_verify_prereq_images 'redhattraining/php-hello-dockerfile'
+
+  # this GE does not require any lab files
+  #ocp4_print_setup_header
+  #ocp4_grab_lab_files
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  # this finish function may display no SUCCESS message. Looks strange.
+  ocp4_login_as_developer
+  #ocp4_cleanup_lab_files
+  # this GE does not changes a git repo
+  ocp4_delete_project "${this}"
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

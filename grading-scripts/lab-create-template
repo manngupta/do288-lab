@@ -1,0 +1,132 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-create-template - grading script for DO288 ch06s04 ge
+#
+# SYNOPSIS
+#     lab-create-template {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish  - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Tue Jun 18 2019 Ravi Srinivasan <ravis@redhat.com>
+#   - updated for OCP 4.1
+#   * Thu Nov 23 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='create-template'
+title='GE: Creating a Multi-container Template'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_git_projects 'quotes'
+
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-quotes-dev" "${RHT_OCP4_DEV_USER}-myquotes"
+
+  ocp4_print_setup_header
+  print_line ' Creating the starter project:'
+  ocp4_grab_lab_files
+
+  local project="${RHT_OCP4_DEV_USER}-quotes-dev"
+
+  ocp4_pad "Create the '${project}' project"
+  if oc new-project "${project}"
+  then
+    print_SUCCESS
+
+    # no need to wait here because adding a volume redeploys the database
+    ocp4_pad 'Deploy the database'
+    if bash "${labs}/${this}/new-app-db.sh"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+
+    ocp4_pad 'Add a volume to the database'
+    #if bash "${labs}/${this}/add-vol.sh" \
+    #  && oc wait dc/quotesdb --for condition=available --timeout=${timeout}
+    if bash "${labs}/${this}/add-vol.sh" \
+      && ocp4_wait "${project}" 'dc/quotesdb'
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    
+    ocp4_pad 'Build and Deploy the application'
+    #if bash "${labs}/${this}/new-app-php.sh" \
+    #  && sleep 3 && oc logs bc/quotesapi -f &>/dev/null \
+    #  && ocp4_check_latest_build_successful "${RHT_OCP4_DEV_USER}-quotes-dev" 'quotesapi' \
+    #  && oc wait dc/quotesapi --for condition=available --timeout=${timeout}
+    if bash "${labs}/${this}/new-app-php.sh" \
+      && ocp4_wait_build "${project}" 'quotesapi' \
+      && ocp4_wait "${project}" 'dc/quotesapi'
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    
+    # no need to wait here because student's will not curls this route, only export it
+    ocp4_pad 'Expose the application'
+    if bash "${labs}/${this}/add-route.sh"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_cleanup_lab_files
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-myquotes" "${RHT_OCP4_DEV_USER}-quotes-dev"
+  ocp4_verify_local_clone_clean
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

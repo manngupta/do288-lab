@@ -1,0 +1,174 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-design-container - grading script for DO288 ch02s07 lab
+#
+# SYNOPSIS
+#     lab-design-container {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#        grade   - grade the work done by the student
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does start, grading, or
+#     finish for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Wed May 29 2019 Ravi Srinivasan <rsriniva@redhat.com>
+#   - Updated for shared cluster classroom env
+#   * Thu Apr 1 2019 Ravi Srinivasan <rsriniva@redhat.com>
+#   - updated for OCP 4
+#   * Thu Oct 15 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='design-container'
+title='Lab: Designing Containerized Applications for OpenShift'
+
+# App JAR location
+app_jar_url='https://github.com/RedHatTraining/DO288-apps/releases/download/OCP-4.1-1'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_git_projects 'hello-java'
+  ocp4_verify_files_available_from_url "${app_jar_url}" 'hello-java.jar'
+
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_cleanup_lab_files
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_verify_local_clone_clean
+
+  ocp4_print_cleanup_footer
+}
+
+
+function lab_grade {
+
+  ocp4_print_grade_header
+
+  ocp4_login_as_developer
+
+  local project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_pad "Enter project '${project}'"
+  if oc project "${project}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='elvis'
+
+
+  #XXX missing a branch indicator? contextDir?
+  #XXX should this be check the BC exists?
+  #XXX should this be check a student's branch exists?
+#  Randy:  The following check was removed since the build object is no longer created.
+#  ocp4_pad "Build config '${app}' points to correct git repo"
+#  local git_uri=$(oc get bc "${app}" -o jsonpath='{.spec.source.git.uri}')
+#  if [ "${git_uri}" = "https://github.com/${RHT_OCP4_GITHUB_USER}/DO288-apps" ]
+#  then
+#    print_PASS
+#  else
+#    print_FAIL
+#  fi
+
+#  ocp4_pad "Latest '${app}' build is successful"
+#  if ocp4_check_latest_build_successful "${project}" "${app}"
+#  then
+#    print_PASS
+#  else
+#   print_FAIL
+#  fi
+
+  ocp4_pad "Pod '${app}' is ready and runnning"
+  if ocp4_check_pod_from_deployment_ready_and_running "${project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Pod '${app}' logs shows application is started"
+  local pod=$(oc get pod -l "deployment=${app}" -o name)
+  if oc logs "${pod}" | grep -q 'Thorntail is Ready'
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Route '${app}' exists"
+  if oc get route "${app}" -o name
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  local elvis_msg='Elvis lives'
+
+  ocp4_pad "Check for '${elvis_msg}' message"
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  if curl -s "http://${hostname}/api/hello" | grep -q "${elvis_msg}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Check value inside config map"
+  local value=$(oc get cm 'appconfig' -o jsonpath='{.data.APP_MSG}')
+  if [ "${value}" = "${elvis_msg}" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_grade_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

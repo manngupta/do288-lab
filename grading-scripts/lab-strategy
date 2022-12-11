@@ -1,0 +1,86 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-strategy - grading script for DO288 GE ch08s04
+#
+# SYNOPSIS
+#     lab-strategy {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Thu Nov 21 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - initial script
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='strategy'
+title='Guided Exercise: Implementing a Deployment Strategy'
+
+sql_url='https://github.com/RedHatTraining/DO288-apps/releases/download/OCP-4.1-1/users.sql'
+import_url='https://github.com/RedHatTraining/DO288-apps/releases/download/OCP-4.1-1/import.sh'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_is_cluster_up
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+  
+  print_line ' Checking required artifacts:'
+  ocp4_pad "SQL initialization script users.sql is available"
+  if ocp4_check_http_status '200' "${sql_url}"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Import script import.sh is available"
+  if ocp4_check_http_status '200' "${import_url}"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_setup_header
+  print_line ' Creating the starter project:'
+  ocp4_grab_lab_files 'no-solution'
+  ocp4_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_cleanup_lab_files 'no-solution'
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+  
+  ocp4_print_cleanup_footer
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

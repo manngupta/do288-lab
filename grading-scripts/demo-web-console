@@ -1,0 +1,69 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     demo-web-console - grading script for DO288 Demo ch01s03
+#
+# SYNOPSIS
+#     demo-web-console {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular demo of awesomeness.
+#
+# CHANGELOG
+#   * Thu Oct 17 2017 Fernando Lozano <flozano@redhat.com>
+#   - Initial commit
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='web-console'
+title='Demo: Managing Application Resources with the Web Console'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp_grab_lab_files 'no-solution'
+
+  ocp_print_prereq_header
+
+  ocp_check_openshift_up
+  ocp_check_git_repo_exists 'php-serverhost'
+  ocp_check_image_exists 'rhscl/php-70-rhel7'
+
+  ocp_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp_print_cleanup_header
+
+  ocp_cleanup_lab_files 'no-solution'
+
+  ocp_delete_project 'serverhost'
+
+  ocp_print_cleanup_footer
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

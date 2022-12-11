@@ -1,0 +1,85 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     demo-camel-timer - grading script for DO288 ch08s05 demo
+#
+# SYNOPSIS
+#     demo-camel-timer {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Fri Dec 08 2017 Douglas Silva <dsilva@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='camel-timer'
+title='Demo: Deploying a Camel Route as a Microservice'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp_print_prereq_header
+
+  ocp_check_openshift_up
+  ocp_check_git_repo_exists 'camel-timer'
+  ocp_check_image_exists 'jboss-fuse-6/fis-java-openshift'
+
+  print_line " Preparing local workstation"
+  pad " . Download maven dependencies to speed up the build"
+  pushd /home/student/
+  rm -rf .m2
+  curl -O http://content.example.com/ocp3.6/x86_64/installers/ch09-repo.tar.gz
+  tar -xzvf ch09-repo.tar.gz 
+  rm -rf ch09-repo.tar.gz
+  chown -R student:student .m2
+  popd
+  
+  if [ -d '/home/student/.m2/repository/io/fabric8/fabric8-maven-plugin/3.1.80.redhat-000019' ]; then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp_print_cleanup_header
+
+  ocp_admin_login_on_master
+  #XXX displays nothing if the project does not exist
+  ocp_delete_project "${this}"
+  ocp_delete_project 'common'
+
+  ocp_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

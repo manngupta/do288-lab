@@ -1,0 +1,129 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-external-registry - grading script for DO288 ch03s02 ge
+#
+# SYNOPSIS
+#     lab-external-registry {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Wed Jun 23 2021 Randy thomas <althomas@redhat.com>
+#   - Updated lab start to pull the ubi-sleep library from the public github repo
+#   - curl command was also changed to use the -L option.
+#   * Thu Jun 12 2017 Fernando Lozano <flozano@redhat.com>
+#   - Updated to use the shared cluster classroom
+#   * Thu Apr 04 2019 Ricardo Jun <jtaniguc@redhat.com>
+#   - Updated to support OCP4.0
+#   * Thu Oct 24 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='external-registry'
+title='GE: Using an External Registry'
+curl_redirect_save='curl -L -s -S -o'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+
+  local image_name="ubi-sleep"
+  local image_url="https://github.com/RedHatTraining/DO288-apps/releases/download/OCP-4.1-1/ubi-sleep-oci.tar.gz"
+  # print_line "*** image_url: ${image_url}"
+  ocp4_pad "OCI container image '${image_name}' is available"
+  if ocp4_check_http_status '200' "${image_url}"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_fail_if_container_exists 'sleep'
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files 'no-solution'
+
+  ocp4_pad "Download OCI container image folder '${image_name}'"
+  thefile="${labs}/${this}/${image_name}-oci.tar.gz"
+  if [ -e thefile ]
+  then
+    rm thefile
+  fi
+  ${curl_redirect_save}  "${thefile}"  "${image_url}"
+  cd "${labs}/${this}"
+  if tar xzf "${image_name}-oci.tar.gz"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+  rm "${image_name}-oci.tar.gz"
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+
+  local image='ubi-sleep:1.0'
+  ocp4_delete_stop_container 'sleep'
+  ocp4_delete_local_image "${image}" "quay.io/${RHT_OCP4_QUAY_USER}/${image}"
+
+  #XXX this one depends on the sudo podman login the student did during the exercise
+  #XXX there is no option that reduces the output from skopeo inspect
+  #XXX only works the first time; if a student redoes the exercise, he callot skopeo delete the image
+  #if skopeo inspect "docker://quay.io/${RHT_OCP4_QUAY_USER}/${image}" >/dev/null
+  #then
+  #  ocp4_pad "Delete image '${image}' from quay.io"
+  #  if skopeo delete "docker://quay.io/${RHT_OCP4_QUAY_USER}/${image}"
+  #  then
+  #    print_SUCCESS
+  #  else
+  #    print_FAIL
+  #  fi
+  #fi
+  ocp4_cleanup_lab_files 'no-solution'
+
+  print_line
+  print_line 'If you want to perform this exercise again, you need to access quay.io'
+  print_line "and delete your 'ubi-sleep' repository."
+  print_line
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

@@ -1,0 +1,167 @@
+#!/usr/bin/bash
+
+# CHANGELOG
+#   * Fri Jun 07 Fernando Lozano <flozano@redhat.com>
+#   - This is trow-away code; we hope to remove this tool when we enter phase 3
+#   - Initial version
+
+# timeout for HTTP connections using curl
+TIMEOUT=6
+
+
+function provision_user {
+
+  # regexes used to validate input
+  local email_regex='^.*@.*\..*$'
+  local user_regex='^[a-z0-9]([-a-z0-9]*[a-z0-9])?*$'
+
+  local firstname
+  local lastname
+  local email
+  local password
+  local confirm_password
+
+  # Collect information from student
+
+  readline firstname 'First Name'
+  readline lastname 'Last Name'
+  readline email 'E-mail address'
+
+  if ! (echo "${email}" | grep -qE "${email_regex}"); then
+    echo
+    fatal 2 "Looks like an invalid email address: '${email}'."
+  fi
+
+  local username=$(echo ${email} | sed 's/@/-/g' | sed 's/\./-/g')
+
+  readline username 'Developer User Name'
+  if ! (echo "${username}" | grep -qE "${user_regex}"); then
+    echo
+    fatal 2 "User name can have only lowercase letters and dashes: '${username}'."
+  fi
+
+  readline password 'Password' -s
+  echo
+  readline confirm_password 'Confirm password' -s
+  echo
+
+  if [ ${password} != ${confirm_password} ]; then
+    echo
+    fatal 2 "Passwords do not match. Please try again."
+  fi
+
+  # Create account on OpenShift cluster
+  echo
+  echo "Adding user '${username}' for \"${firstname} ${lastname}\" <${email}>"
+  echo -n "Is this correct? (y/n): "
+  read -n 1 confirm
+  echo
+  if [ "${confirm}" != 'y' ]; then
+    fatal 3 "Your answer was not 'y'."
+  fi
+
+  # Check provisioner service is available
+
+  local provisioner_host='provisioner.dev.nextcle.com'
+
+  local api_check=$(curl -s "https://${provisioner_host}/api/account/v1/healthz" | jq -r '.health')
+  if [ "${api_check}" != "ok" ]; then
+    fatal 4 "Unable to communicate with provisioning service."
+  fi
+
+  # Create account on OpenShift cluster
+
+  local json_request="{
+    \"region\": \"na\",
+    \"firstname\": \"${firstname}\",
+    \"lastname\": \"${lastname}\",
+    \"username\": \"${username}\",
+    \"password\": \"${password}\",
+    \"email\": \"${email}\"
+  }"
+
+  local json_response=$(curl -s \
+       -H "Authorization: Basic Z2xzOnJodA==" \
+       -H "Content-Type: application/json" \
+       -H "Accept: application/json" \
+       -X POST \
+       -d "${json_request}" \
+       "https://${provisioner_host}/api/account/v1/user/${username}")
+
+  local server_url=$(echo ${json_response} | jq -r '.url')
+  local domain=$(echo ${json_response} | jq -r '.appsSubdomain')
+  local clusterID=$(echo ${json_response} | jq -r '.clusterID')
+  local msg=$(echo ${json_response} | jq -r '.status')
+
+  echo
+  if [ "${msg}" = "User already exists." ]
+  then
+    fatal 5 "User '${username}' already exists."
+  elif [ "${msg}" = "Cluster access granted." ]
+  then
+    echo "User added to the OpenShift cluster."
+    echo
+    echo -e " · Developer User Name:\t${username}"
+    echo -e " · Master API URL:\t${server_url}"
+    echo -e " · Wildcard Domain:\t${domain}"
+    echo -e " · Cluster ID:\t\t${clusterID}"
+    echo
+  else
+    fatal 99 "Provioner service error: ${msg}"
+  fi
+}
+
+
+function error {
+  echo "$@" 1>&2
+}
+
+
+function fatal {
+  local code="$1"
+
+  rm -rf "${kube_auth_tmp}"
+  error ''
+  error 'ERROR:'
+  while [ "$2" != "" ]; do
+    error "$2"
+    shift
+  done
+  error "Not adding user to OpenShift."
+  exit $code
+}
+
+
+function readline {
+  local return_var="$1"
+  local prompt_msg="$2"
+  # optional
+  local opts="$3"
+
+  local input_line=''
+
+  while [ "${input_line}" = '' ]; do
+    echo -n
+    read ${opts} -e -p " · Enter the ${prompt_msg}: " -i "${!return_var}" input_line
+    if  [ "${input_line}" = '' ]; then
+      echo "   ${prompt_msg} cannot be empty. Try again."
+    fi
+  done
+
+  eval $return_var="'${input_line}'"
+}
+
+
+echo
+echo "This script provisions a developer user on the classroom's OpenShift cluster"
+echo
+
+if [ "$1" != "" ]; then
+  echo "Usage: $( basename $0 ) [-h]"
+  echo
+  echo -e "  -h: displays this help message"
+  echo
+else
+  provision_user
+fi
+

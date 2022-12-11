@@ -1,0 +1,69 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     demo-nginx-s2i - grading script for DO288 video lecture ch05s03
+#
+# SYNOPSIS
+#     demo-nginx-s2i {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular demo of awesomeness.
+#
+# CHANGELOG
+#   * Thu Nov 10 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - use Lab 1.7 script as a template
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='nginx-s2i'
+title='Demo: Building an Nginx S2I Builder Image'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp_grab_lab_files
+
+  ocp_print_prereq_header
+
+  ocp_check_openshift_up
+  ocp_check_git_repo_exists 'html-helloworld'
+  ocp_check_image_exists 'rhel7'
+
+  ocp_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp_print_cleanup_header
+
+  ocp_cleanup_lab_files
+
+  ocp_delete_project "${this}"
+
+  ocp_print_cleanup_footer
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

@@ -1,0 +1,72 @@
+#!/usr/bin/bash
+#
+# Copyright 2021 Red Hat, Inc.
+#
+# NAME
+#     lab-multicontainer-helm - grading script for DO288 ch06s04 GE
+#
+# SYNOPSIS
+#     lab-multicontainer-helm {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish  - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does start or finish for the particular lab.
+#
+# CHANGELOG
+#   * Fri May 07 2021 Eduardo Ramirez <eramirez@redhat.com>
+#   - Initial version
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='multicontainer-helm'
+title='GE: Creating a Helm Chart'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+  
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_setup_header
+
+  ocp4_grab_lab_files
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_cleanup_lab_files
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

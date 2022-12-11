@@ -1,0 +1,203 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-expose-image - grading script for DO288 ch03s07 lab
+#
+# SYNOPSIS
+#     lab-expose-image {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish  - perform post-lab cleanup
+#        grade   - grande the work done by the student
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does start, grading,
+#     finish, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Fri Jun 25 2021 Randy Thomas <althomas@redhat.com>
+#   - Updated image url to use public github repo.  Updated the curl to handle updates via the -L option
+#   * Tue Apr 09 2019 Ravi Srinivasan <ravis@redhat.com>
+#   - Updated for OCP 4
+#   * Thu Nov 06 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='expose-image'
+title='Lab: Publishing Enterprise Container Images'
+curl_redirect_save='curl -L -s -S -o'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+
+  local image_name="php-info"
+  local image_url="https://github.com/RedHatTraining/DO288-apps/releases/download/OCP-4.1-1/${image_name}-oci.tar.gz"
+  ocp4_pad "OCI container image '${image_name}' is available"
+  if ocp4_check_http_status '200' "${image_url}"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}" "${RHT_OCP4_DEV_USER}-common"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files 'no-solution'
+
+  ocp4_pad "Download OCI container image folder '${image_name}'"
+  thefile="${labs}/${this}/${image_name}-oci.tar.gz"
+  if [ -e thefile ]
+  then
+    rm thefile
+  fi
+  ${curl_redirect_save}  "${thefile}"  "${image_url}"
+  cd "${labs}/${this}"
+  if tar xzf "${image_name}-oci.tar.gz"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+  rm "${image_name}-oci.tar.gz"
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}" "${RHT_OCP4_DEV_USER}-common"
+
+  ocp4_cleanup_lab_files 'no-solution'
+
+  print_line
+  print_line 'If you want to perform this exercise again, you need to access quay.io'
+  print_line "and delete your 'php-info' repository."
+  print_line
+
+  ocp4_print_cleanup_footer
+}
+
+
+function lab_grade {
+
+  ocp4_print_grade_header
+
+  ocp4_login_as_developer
+
+  #XXX cannot check that image exists in quay.io because it is private
+
+  local project="${RHT_OCP4_DEV_USER}-common"
+
+  ocp4_pad "Enter project '${project}'"
+  if oc project "${project}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  ocp4_pad "Image stream tag 'php-info:latest' exists"
+  if oc get istag php-info:latest -o name 
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Image stream 'php-info' points to external registry"
+  local image="quay.io/${RHT_OCP4_QUAY_USER}/php-info"
+  ##RA: added sed to fix DO288-88
+  local istag_from=$(oc get is php-info -o jsonpath='{.spec.tags[0].from.name}' | sed -e 's/:.*$//g')  
+  if [ "${image}" = "${istag_from}" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  local image_ref=$(oc get istag php-info:latest -o jsonpath='{.image.dockerImageReference}')
+
+  local project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_pad "Enter project '${project}'"
+  if oc project "${project}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='info'
+
+  ocp4_pad "Deployment '${app}' points to the same image as the image stream"
+  local image_from_dc=$(oc get deployment "${app}" -o jsonpath='{.spec.template.spec.containers[0].image}')
+  if [ "${image_ref}" = "${image_from_dc}" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Pod '${app}' is ready and runnning"
+  if ocp4_check_pod_from_deployment_ready_and_running "${project}" "${app}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Route '${app}' exists"
+  if oc get route "${app}" -o name
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  local msg='phpinfo'
+
+  ocp4_pad "Application returns the '${msg}' message"
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  if curl -s "http://${hostname}" | grep -q "${msg}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_grade_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

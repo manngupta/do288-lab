@@ -1,0 +1,110 @@
+#!/usr/bin/bash
+#
+# Copyright 2021 Red Hat, Inc
+#
+# NAME
+#     lab-multicontainer-review - grading script for DO288 ch06s07 lab
+#
+# SYNOPSIS
+#     lab-multicontainer-review {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#        grade   - grande the work done by the student
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Fri Jun 25 2021 Ravi Srinivasan <eramirez@redhat.com>
+#   - Updated for OCP 4.6
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='multicontainer-review'
+title='Lab: Deploying Multi-container Applications'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function lab_start {
+  project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_prereq_header
+  ocp4_is_cluster_up  
+
+  print_line ' Checking required artifacts:'
+  ocp4_fail_if_project_exists "${project}"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+
+  ocp4_print_setup_footer
+}
+
+function lab_finish {
+  project="${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_print_cleanup_header
+
+  ocp4_cleanup_lab_files
+
+  ocp4_login_as_developer
+
+  #XXX displays nothing if the project does not exist
+  echo "Attempting to remove project: ${project}"
+  ocp4_delete_project "${project}"
+
+  ocp4_print_cleanup_footer
+}
+
+function lab_grade {
+  project="${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_print_grade_header
+
+  ocp4_login_as_developer
+
+  ocp4_pad "Project '${project}' exists"
+  if oc project "${project}"; then
+    print_PASS
+  else
+    print_FAIL
+    print_line "Failed to enter project '${project}' as the developer user"
+  fi
+
+
+  ocp4_exit_on_failure
+
+  ocp4_pad "Application was deployed using Helm"
+  if oc get deployments -o yaml | grep -i "app.kubernetes.io/managed-by: Helm"; then
+    print_PASS
+  else
+    print_FAIL
+    print_line "Application in project '${project}' was not deployed using Helm"
+  fi
+
+  ocp4_pad "Kustomization was applied"
+  local memory_limit=$(oc get deployments exoplanets-exochart -o jsonpath='{.spec.template.spec.containers[0].resources.limits.memory}')
+  if [ "${memory_limit}" = "128Mi" ]; then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_grade_footer
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

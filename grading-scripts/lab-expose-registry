@@ -1,0 +1,109 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-expose-registry - grading script for DO288 ch03s04 ge
+#
+# SYNOPSIS
+#     lab-expose-registry {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Thu Jun 24 2021 Randy Thomas <althomas@redhat.com>
+#   - updated the URL to use the public github repo and the curl command to handle the redirect via the -L option
+#   * Fri Jun 14 2019 Fernando Lozano <flozano@redhat.com>
+#   - changes for shared cluster OCP4
+#   * Thu Nov 01 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='expose-registry'
+title='GE: Using the OpenShift Registry'
+curl_redirect_save='curl -L -s -S -o'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_is_cluster_up
+  print_line ' Checking required artifacts:'
+
+  local image_name="ubi-info"
+  local image_url="https://github.com/RedHatTraining/DO288-apps/releases/download/OCP-4.1-1/ubi-info-oci.tar.gz"
+  ocp4_pad "OCI container image '${image_name}' is available"
+  if ocp4_check_http_status '200' "${image_url}"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-common"
+  ocp4_fail_if_container_exists 'info'
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+
+  ocp4_pad "Download OCI container image folder '${image_name}'"
+  thefile="${labs}/${this}/${image_name}-oci.tar.gz"
+  if [ -e thefile ]
+  then
+    rm thefile
+  fi
+  ${curl_redirect_save}  "${thefile}"  "${image_url}"
+  cd "${labs}/${this}"
+  if tar xzf "${image_name}-oci.tar.gz"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+  rm "${image_name}-oci.tar.gz"
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-common"
+
+  local image='ubi-info:1.0'
+  local host=$(oc get route default-route -n openshift-image-registry -o jsonpath='{.spec.host}')
+
+  ocp4_delete_stop_container 'info'
+  #echo "*** rmi: ${host}/${RHT_OCP4_DEV_USER}-common/${image}"
+  ocp4_delete_local_image "${host}/${RHT_OCP4_DEV_USER}-common/${image}"
+
+  ocp4_cleanup_lab_files
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

@@ -1,0 +1,152 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-manage-deploy - grading script for DO288 GE ch08s07
+#
+# SYNOPSIS
+#     lab-manage-deploy {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Fri Jul 19 2019 Richard Allred <rallred@redhat.com>
+#   - update to OCP4.1
+#   * Thu Dec 3 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - initial script
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='manage-deploy'
+title='Lab: Managing Application Deployments'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_verify_prereq_git_projects 'php-scale'
+  ocp4_print_setup_footer
+
+}
+
+function lab_grade {
+
+  ocp4_print_grade_header
+
+  ocp4_login_as_developer
+
+  local project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_pad "Enter project '${project}'"
+  if oc project "${project}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='scale'
+
+  ocp4_pad "Build config '${app}' points to correct git repo"
+  local git_uri=$(oc get bc "${app}" -o jsonpath='{.spec.source.git.uri}')
+  if [ "${git_uri}" = "https://github.com/${RHT_OCP4_GITHUB_USER}/DO288-apps" ]
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Latest '${app}' build is successful"
+  if ocp4_check_latest_build_successful "${project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+  
+  pad " · Pod count for app is 2"
+  local pod_count=$(oc get pod -l "deploymentconfig=${app}" -o name --no-headers --field-selector=status.phase=Running | wc -l)
+
+  if [ "$pod_count" = "2" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  ocp4_pad "Route '${app}' exists"
+  if [[ -n $hostname ]];
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  local hello_msg='version 1'
+  pad " · Application '${app}' returns the '${hello_msg}' message"
+  local match=$(curl -s "http://${hostname}" | grep "${hello_msg}")
+  if [ -z "${match}" ]
+  then
+    print_FAIL
+  else
+    print_PASS
+  fi
+
+  pad " · There were at least two builds of '${app}'"
+  local build_count=$(oc get build | wc -l)
+  if [ "${build_count}" -ge "3" ] # +1 because of the heading
+  then
+      print_PASS
+  else 
+      print_FAIL
+  fi
+
+  pad " · There were at least three deployments of '${app}'"
+  local last_deployment=$(oc get dc "${app}" -o jsonpath='{.status.latestVersion}')
+  if [ "${last_deployment}" -ge "3" ]
+  then
+      print_PASS
+  else 
+      print_FAIL
+  fi
+
+  ocp4_print_grade_footer
+
+}
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_print_cleanup_footer
+
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

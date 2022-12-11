@@ -1,0 +1,226 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-custom-s2i - grading script for DO288 GE ch05s05
+#
+# SYNOPSIS
+#     lab-custom-s2i {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Wed Jul 7 2021 Randy Thomas <althomas@redhat.com>
+#   - removed invalid check for source-to-image package
+#   - replaced deploymentconfig with deployment
+#   * Thu Nov 8 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - initial script
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='custom-s2i'
+title='Lab: Customizing Source to Image Builds'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_fail_if_container_exists 'info'
+  ocp4_verify_prereq_git_projects 'go-hello'
+  
+#  local package='source-to-image'
+#
+#  print_line ' Checking required arifacts:'
+#  ocp4_pad 'Checking the source-to-image rpm is installed'
+#  if yum list installed "${package}"
+#  then
+#    print_SUCCESS
+#  else
+#    print_FAIL 
+#  fi
+
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+
+  ocp4_print_setup_footer
+
+
+}
+
+function lab_grade {
+
+  ocp4_print_grade_header
+
+  ocp4_login_as_developer
+
+  local project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_pad "Enter project '${project}'"
+  if oc project "${project}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='greet'
+  local image='s2i-do288-go'
+
+  ocp4_pad "Imagestream '${image}' exists"
+  if oc get is "${image}" -o name
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Imagestream '${image}' points to your Quay.io account"
+  if oc get is "${image}" -o jsonpath='{.spec.tags[0].from.name}'
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Build config '${app}' points to correct git repo"
+  local git_uri=$(oc get bc "${app}" -o jsonpath='{.spec.source.git.uri}')
+  if [[ "${git_uri}" = "https://github.com/${RHT_OCP4_GITHUB_USER}/DO288-apps" || "${git_uri}" = "https://github.com/${RHT_OCP4_GITHUB_USER}/DO288-apps.git" ]] 
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Latest '${app}' build is successful"
+  if ocp4_check_latest_build_successful "${project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Pod '${app}' is ready and runnning"
+  if ocp4_check_pod_from_deployment_ready_and_running "${project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Pod '${app}' logs shows application is started"
+  local pod=$(oc get pod -l "deployment=${app}" -o name)
+  if oc logs "${pod}" | grep -q 'Starting server on port 8080'
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Route '${app}' exists"
+  if oc get route "${app}" -o name
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  local app_msg='Hola user1!. Bienvenido!'
+
+  ocp4_pad "Check for '${app_msg}' message"
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  if curl -s "http://${hostname}/user1" | grep -q "${app_msg}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_grade_footer
+
+}
+
+function lab_finish {
+
+ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+
+  local image='s2i-do288-go'
+  ocp4_delete_stop_container 'go-test'
+  ocp4_delete_local_image "${image}" "quay.io/${RHT_OCP4_QUAY_USER}/${image}"
+
+  local container='go-test'
+
+  ocp4_delete_stop_container "${container}"
+  
+  local image='ubi8/ubi:8.0'
+  local builder_image='s2i-do288-go'
+  local sample_app='s2i-go-app'
+
+  ocp4_delete_local_image "${image}" "${builder_image}" "${sample_app}"
+
+  #XXX this one depends on the sudo podman login the student did during the exercise
+  #XXX there is no option that reduces the output from skopeo inspect
+  #XXX only works the first time; if a student redoes the exercise, he callot skopeo delete the image
+  #if skopeo inspect "docker://quay.io/${RHT_OCP4_QUAY_USER}/${image}" >/dev/null
+  #then
+  #  ocp4_pad "Delete image '${image}' from quay.io"
+  #  if skopeo delete "docker://quay.io/${RHT_OCP4_QUAY_USER}/${image}"
+  #  then
+  #    print_SUCCESS
+  #  else
+  #    print_FAIL
+  #  fi
+  #fi
+  ocp4_cleanup_lab_files
+
+  print_line
+  print_line 'If you want to perform this exercise again, you need to access quay.io'
+  print_line "and delete your 's2i-do288-go' repository."
+  print_line
+
+  ocp4_print_cleanup_footer
+
+  # local builder='s2i-do288-go'
+  # local registry='registry.lab.example.com:5000'
+
+  # pad " · Remove the ${builder} image from the classroom registry"
+
+  # if skopeo delete --tls-verify=false docker://${registry}/${builder}
+  # then
+  #   print_SUCCESS
+  # else
+  #   print_FAIL
+  # fi
+
+
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

@@ -1,0 +1,94 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-s2i-scripts - grading script for DO288 GE ch05s02
+#
+# SYNOPSIS
+#     lab-s2i-scripts {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Mon Jun 10 2019 Richard Allred <rallred@redhat.com>
+#   - Updates for OCP4.1 and shared cluster
+#   * Thu Nov 3 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - initial script
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='s2i-scripts'
+title='Guided Exercise: Customizing S2I Builds'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_fail_if_container_exists 'test'
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+
+  local container='test'
+
+  if podman inspect --type container --format "{{.Id}}" "${container}"
+  then
+    ocp4_pad "Stop and remove the ${container} container"
+    podman stop "${container}"
+    if podman rm "${container}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+  fi
+
+  local image='rhscl/httpd-24-rhel7'
+
+  if podman inspect --type image --format "{{.Id}}" "${image}"
+  then
+    ocp4_pad "Remove the ${image} container image"
+    if podman rmi -f "${image}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+  fi
+
+  ocp4_verify_local_clone_clean
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

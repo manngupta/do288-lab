@@ -1,0 +1,223 @@
+#!/bin/bash
+#
+# Copyright 2019 Red Hat, Inc.
+#
+# NAME
+#     lab-review-cicd - grading script for DO288 Lab ch08s07
+#
+# SYNOPSIS
+#     lab-review-cicd {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#        grade - grade the lab
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does start or
+#     finish for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Fri Jul 12 2019 Ravi Srinivasan <rsriniva@redhat.com>
+#   - initial script
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='review-cicd'
+title='Lab: Implementing Continuous Integration and Continuous Deployment Pipelines in OpenShift'
+app='movies'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function lab_start {
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_git_projects "${app}"
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${app}-dev" "${RHT_OCP4_DEV_USER}-${app}-stage"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+  ocp4_print_setup_footer
+}
+
+function lab_grade {
+
+  ocp4_print_grade_header
+
+  print_line 'Checking deployed Jenkins instance'
+
+  ocp4_login_as_developer
+
+  local jenkins_project="${RHT_OCP4_DEV_USER}-jenkins"
+
+  ocp4_pad "Enter project '${jenkins_project}'"
+  if oc project "${jenkins_project}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='jenkins'
+
+  ocp4_pad "Jenkins pod is ready and runnning"
+  if ocp4_check_pod_from_dc_ready_and_running "${jenkins_project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  ocp4_pad "Route '${app}' exists"
+  if [[ -n $hostname ]];
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Can access Jenkins web console"
+  #local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  if ocp4_check_http_status 403 "https://${hostname}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  print_line 'Checking development environment'
+
+  local dev_project="${RHT_OCP4_DEV_USER}-movies-dev"
+
+  ocp4_pad "Enter project '${dev_project}'"
+  if oc project "${dev_project}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='movies'
+
+  ocp4_pad "Image stream tag 'movies:latest' exists"
+  if oc get istag movies:latest -o name
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Application pod is ready and runnning"
+  if ocp4_check_pod_from_dc_ready_and_running "${dev_project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  ocp4_pad "Route '${app}' exists"
+  if [[ -n $hostname ]];
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Can access application in dev env"
+  #local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  if ocp4_check_http_status 200 "http://${hostname}/movies"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  print_line 'Checking staging environment'
+
+  local stage_project="${RHT_OCP4_DEV_USER}-movies-stage"
+
+  ocp4_pad "Enter project '${stage_project}'"
+  if oc project "${stage_project}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='movies'
+
+  ocp4_pad "Image stream tag 'movies:stage' exists"
+  if oc get istag movies:stage -o name
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Application pod is ready and runnning"
+  if ocp4_check_pod_from_dc_ready_and_running "${stage_project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  ocp4_pad "Route '${app}' exists"
+  if [[ -n $hostname ]];
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Can access application in staging env"
+  #local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  if ocp4_check_http_status 200 "http://${hostname}/movies"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_grade_footer
+}
+
+
+function lab_finish {
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_cleanup_lab_files
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${app}-dev" "${RHT_OCP4_DEV_USER}-${app}-stage" "${RHT_OCP4_DEV_USER}-jenkins"
+  ocp4_verify_local_clone_clean
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

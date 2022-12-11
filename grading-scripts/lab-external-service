@@ -1,0 +1,117 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-external-service - grading script for DO288 ch09s02 ge
+#
+# SYNOPSIS
+#     lab-review-template {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Thu Dec 05 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='external-service'
+title='GE: Integrating an External Service'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_git_projects 'todo-single'
+  ocp4_verify_prereq_nexus_repositories 'nodejs'
+
+  ocp4_pad 'Todo database exists on external MySQL server'
+  if mysqlshow -utodoapp -predhat123 -h${RHT_OCP4_MYSQL_SERVER} todo
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  local project="${RHT_OCP4_DEV_USER}-${this}"
+  local app=todoapp
+
+  ocp4_login_as_developer
+  ocp4_fail_if_project_exists "${project}"
+
+  ocp4_print_setup_header
+
+  print_line ' Deploying the To Do List application:'
+
+  ocp4_grab_lab_files 'no_solution'
+  
+  ocp4_pad "Create the ${project} project in OpenShift"
+  if oc new-project "${project}"
+  then
+    print_SUCCESS
+  
+    ocp4_pad 'Build and deploy the application'
+    if "${labs}/${this}/oc-new-app.sh" \
+      && ocp4_wait_build "${project}" "${app}" \
+      && ocp4_wait "${project}" "dc/${app}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+  
+    ocp4_pad 'Expose the application'
+    if oc expose svc "${app}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+  
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_setup_footer
+}
+
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+
+  ocp4_login_as_developer
+  ocp4_cleanup_lab_files 'no_solution'
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_verify_local_clone_clean
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

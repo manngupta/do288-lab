@@ -1,0 +1,211 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-review-template - grading script for DO288 ch06s05 lab
+#
+# SYNOPSIS
+#     lab-review-template {start|finish|grade}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#        grade   - grande the work done by the student
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Thu Jun 27 2019 Fernando Lozano <flozano@redhat.com>
+#   - updated for shlib refactoring
+#   * Thu Jun 21 2019 Ravi Srinivasan <ravis@redhat.com>
+#   - updated for OCP 4.1
+#   * Thu Nov 30 2017 Fernando Lozano <flozano@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='review-template'
+title='Lab: Creating Applications from OpenShift Templates'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish grade)
+
+
+function lab_start {
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_is_cluster_up
+
+  print_line ' Checking required artifacts:'
+  ocp4_verify_prereq_git_projects 'todo-single'
+  ocp4_verify_prereq_nexus_repositories 'nodejs'
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+  ocp4_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+  ocp4_login_as_developer
+  ocp4_cleanup_lab_files
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_verify_local_clone_clean
+  ocp4_print_cleanup_footer
+}
+
+
+function lab_grade {
+
+  ocp4_print_grade_header
+
+  local template='/home/student/todo-template.yaml'
+
+  print_line ' Checking edits to the template file'
+  ocp4_pad "Template file '${this}' exists"
+  if [ -r "${template}" ]
+  then
+    print_PASS
+
+    ocp4_pad "Template file defines six parameters"
+    local param_count=$(yq r ${template} 'parameters[*].name' | wc -l)
+    if [ "${param_count}" = "6" ]
+    then
+      print_PASS
+    else
+      print_FAIL
+    fi
+
+    ocp4_pad "Parameter PASSWORD was defined"
+    if yq r ${template} 'parameters[*].name' | grep -q '^- PASSWORD'
+    then
+      print_PASS
+    else
+      print_FAIL
+    fi
+
+    ocp4_pad "Parameter CLEAN_DATABASE was defined"
+    if yq r ${template} 'parameters[*].name' | grep -q '^- CLEAN_DATABASE'
+    then
+      print_PASS
+    else
+      print_FAIL
+    fi
+
+    ocp4_pad "Template references PASSWORD parameter twice"
+    local ref_count=$(grep '${PASSWORD}' "${template}" | wc -l)
+    if [ "${ref_count}" = "2" ]
+    then
+      print_PASS
+    else
+      print_FAIL
+    fi
+
+    ocp4_pad "Template references HOSTNAME parameter once"
+    local ref_count=$(grep '${HOSTNAME}' "${template}" | wc -l)
+    if [ "${ref_count}" = "1" ]
+    then
+      print_PASS
+    else
+      print_FAIL
+    fi
+
+  else
+      print_FAIL
+  fi
+
+  print_line ' Checking deployed todo application'
+
+  ocp4_login_as_developer
+
+  local project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_pad "Enter project '${project}'"
+  if oc project "${project}"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_exit_on_failure
+
+  local app='tododb'
+
+  ocp4_pad "Database pod is ready and runnning"
+  if ocp4_check_pod_from_dc_ready_and_running "${project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  local app='todoapp'
+
+  #XXX missing a branch indicator? contextDir?
+  ocp4_pad "Build config '${app}' points to correct git repo"
+  local git_uri=$(oc get bc "${app}" -o jsonpath='{.spec.source.git.uri}')
+  if [ "${git_uri}" = "https://github.com/${RHT_OCP4_GITHUB_USER}/DO288-apps" ]
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Latest '${app}' build is successful"
+  if ocp4_check_latest_build_successful "${project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Application pod is ready and runnning"
+  if ocp4_check_pod_from_dc_ready_and_running "${project}" "${app}"
+  then
+    print_PASS
+  else
+   print_FAIL
+  fi
+
+  ocp4_pad "Route '${app}' exists"
+  if oc get route "${app}" -o name
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad "Application API can connect to the database"
+  local hostname=$(oc get route "${app}" -o jsonpath='{.spec.host}')
+  if ocp4_check_http_status 200 "http://${hostname}/todo/api/items-count"
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_grade_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

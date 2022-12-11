@@ -1,0 +1,1007 @@
+#
+# Copyright 2016 Red Hat, Inc.
+#
+# NAME
+#     labtool.do288.shlib - lab grading script do288 function library
+#
+# SYNOPSIS
+#     Add the following line at the top of your script:
+#
+#        source /path/to/labtool.do288.shlib
+#
+#     *after* the source of the generic labtool.shlib
+#
+# DESCRIPTION
+#
+# CHANGELOG
+#   * Tue Dec 27 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_success_if_project_exists to verify if one or more projects exists
+#   * Tue Dec 08 2017 Fernando Lozano <flozano@redhat.com>
+#   - Fixes to ocp_create_share, ocp_delete_share, ocp_create_pv and ocp_delete_pv timming issues with recycling
+#   * Tue Nov 24 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_create_share to create and share folders for PVs using NFS in the services VM
+#   - New function ocp_delete_share to delete and unshare folders for PVs using NFS in the services VM
+#   - New function ocp_create_pv to create PVs for NFS folders
+#   - New function ocp_delete_pv to delete the PVs created for NFS folders
+#   - New function ocp_success_if_script to run a script and print SUCCESS/FAIL status
+#   * Tue Nov 10 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_pass_if_image_exists to verify that an image exists in the classroom registry
+#   - New function ocp_pass_if_http_status to verify that an URL returns a given HTTP status
+#   * Tue Nov 08 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_pass_if_user_has_clusterrole to verify that a user has a cluster role
+#   - New function ocp_pass_if_group_has_role to verify that a group has a project role
+#   - New function ocp_pass_if_is_points_to_image to verify if an image stream points to an image URL
+#   - New function ocp_pass_if_dc_points_to_image to verify if an deployment configuration points to an image URL
+#   * Tue Nov 07 2017 Douglas Silva <dsilva@redhat.com>
+#   - New function ocp_download_file to download a file in workstation
+#   * Mon Nov 01 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_install_package to install a package in workstation
+#   - New function ocp_check_docker_up to check that docker is up in workstation
+#   * Mon Oct 30 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_check_nexus_maven for setup
+#   * Wed Oct 24 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_success_if_package_in_yum_repo
+#   * Wed Oct 17 2017 Fernando Lozano <flozano@redhat.com>
+#   - New function ocp_pass_if_configmap_matches_key_value
+#   * Wed Oct 06 2017 Fernando Lozano <flozano@redhat.com>
+#   - First batch of functions for grade
+#   - New function ocp_check_nexus_npm for setup
+#   - Refactor functions based on HTTP status to call ocp_check_http_status
+#   - Declare variables internal to a function as local
+#   * Wed Oct 05 2017 Fernando Lozano <flozano@redhat.com>
+#   - Add 'ocp_' preffix to all functions
+#   * Wed Oct 04 2017 Fernando Lozano <flozano@redhat.com>
+#   - Initial revision
+#   * Thu Jan 21 2016 George Hacker <ghacker@redhat.com>
+#   - create template
+
+#########################################################################
+##########################################################################
+##                   How to use this template:
+##
+## 1. Rename the file to labtool.<platform>.shlib
+## 2. Adjust the comments above
+## 3. Add functions below here to override and/or supplement
+##    labtool.shlib
+## 4. Remove these "How to use this template" comments
+##########################################################################
+##########################################################################
+
+
+# vim: ts=4 sw=2
+
+
+##########################################################################
+## Global variables
+## Those need to be customized for each courses
+## Each script also needs do define:
+## - this: exercise's folder name (equal do grading script name)
+## - title: exercise's title
+##########################################################################
+
+COURSE="DO288"
+COURSE_HOME="/home/student/${COURSE}"
+git_url='http://services.lab.example.com'
+reg_url='http://registry.lab.example.com:5000'
+reg_host='registry.lab.example.com:5000'
+nexus_node_url='http://services.lab.example.com:8081/nexus/content/groups/nodejs/'
+nexus_maven_url='http://services.lab.example.com:8081/nexus/content/groups/training-java/'
+
+
+##########################################################################
+## Global variables
+## Those are used by the functions but should not require customization
+##########################################################################
+
+labs="${COURSE_HOME}/labs"
+solutions="${COURSE_HOME}/solutions"
+curl_save='curl -s -S -o'
+materials="http://materials.example.com"
+contents="http://content.example.com"
+
+
+##########################################################################
+## Generic functions
+## Those should be reusable without changes by other courses
+##########################################################################
+
+
+function ocp_print_prereq_header {
+  print_header "Checking prerequisites for ${title}"
+}
+
+
+function ocp_print_setup_header {
+  print_header "Setting up the classroom for ${title}"
+}
+
+
+function ocp_print_setup_footer {
+  print_line
+  pad 'Overall setup status'
+
+  if [[ ${fail_count} -eq 0 ]]
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+  print_line
+}
+
+
+function ocp_print_grade_header {
+  print_header "Grading the student's work for ${title}"
+}
+
+
+function ocp_print_grade_footer {
+  print_line
+  pad 'Overall exercise grade'
+  if [[ ${fail_count} -eq 0 ]]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+
+  print_line
+}
+
+
+function ocp_print_cleanup_header {
+  print_header "Cleaning up from ${title}"
+}
+
+
+function ocp_print_cleanup_footer {
+  print_header "Please use setup if you wish to do the exercise again."
+}
+
+
+function ocp_pass_if_equals {
+  if [ "$1" = "$2" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_pass_if_not_equals {
+  if [ "$1" != "$2" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_success_if_equals {
+  if [ "$1" = "$2" ]
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_success_if_not_equals {
+  if [ "$1" != "$2" ]
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_print_on_failure {
+  local msg="$1"
+  if [ ${fail_count} != 0 ]
+  then
+    print_line
+    print_line "${msg}"
+    print_line
+  fi
+}
+
+
+function ocp_exit_on_failure {
+  local msg="$1"
+  if [ ${fail_count} != 0 ]
+  then
+    print_line
+    pad 'Cannot continue due to the previous errors'
+    print_FAIL
+    if [ "${msg}" != "" ]
+    then
+        print_line "${msg}"
+    fi
+    print_line
+    exit 1
+  fi
+}
+
+
+function ocp_check_vm_up {
+  local vm="$1"
+
+  if ! host_reachable ${vm}
+  then
+    print_FAIL
+  else
+    print_SUCCESS
+  fi
+}
+
+
+function ocp_download_file {
+  local final_name="$1"
+  local destination="$2"
+  local url="$3"
+  pad " · Download ${final_name}"
+  
+  ${curl_save} "${destination}/${final_name}" "${url}"
+  if [ -f "${destination}/${final_name}" ]; then
+    chown -R student:student "${destination}"
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+}
+
+
+function ocp_download_extract
+{
+  local tarfile="$1"
+  local iso="$2"
+
+  local url="${contents}/ocp3.6/x86_64/${iso}/${tarfile}"
+  
+  ${curl_save} "${labs}/${this}/${tarfile}" "${url}"
+  cd "${labs}/${this}"
+  if tar xzf "${tarfile}"
+  then
+    chown -R student:student   cd "${labs}/${this}/$(basename ${tarfile})"
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+  rm "${tarfile}"
+}
+
+
+function ocp_grab_lab_files
+{
+  local no_solution="$1"
+
+  print_header "Downloading files for ${title}"
+
+  if [ -d "${labs}/${this}" ]; then
+    print_line " Exercise has already been downloaded. Use cleanup if you want to start over."
+    print_line
+    return
+  fi
+
+  pad ' · Download exercise files'
+  mkdir -p "${labs}/${this}"
+  chown student:student "${COURSE_HOME}"
+  chown student:student "${labs}"
+
+  ${curl_save} ${labs}/${this}.tgz ${materials}/labs/${this}.tgz
+  if [ -f "${labs}/${this}.tgz" ]; then
+    pushd ${labs}
+    if tar xzf ${this}.tgz ; then
+      rm -f ${this}.tgz
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    popd
+  else
+    print_FAIL
+  fi
+
+  chown -R student:student "${labs}/${this}"
+
+  if [ "${no_solution}" == "" ]
+  then
+
+    pad ' · Download solution files'
+    mkdir -p "${solutions}/${this}"
+    chown student:student "${solutions}"
+
+    ${curl_save} ${solutions}/${this}.tgz ${materials}/solutions/${this}.tgz
+    if [ -f "${solutions}/${this}.tgz" ]; then
+      pushd ${solutions}
+      if tar xzf ${this}.tgz; then
+        rm -f ${this}.tgz
+        print_SUCCESS
+      else
+        print_FAIL
+      fi
+      popd
+    else
+      print_FAIL
+    fi
+
+    chown -R student:student "${solutions}/${this}"
+  fi
+
+  ocp_print_on_failure ' There was a problem downloading this exercise files.'
+}
+
+
+function ocp_cleanup_lab_files
+{
+  local no_solution="$1"
+
+  pad ' · Remove exercise files'
+  rm -fr ${labs}/${this}
+  print_SUCCESS
+
+  if [ "${no_solution}" == "" ]
+  then
+    pad ' · Remove solution files'
+    rm -fr ${solutions}/${this}
+    print_SUCCESS
+  fi
+}
+
+
+function ocp_check_http_status {
+  local url="$1"
+  local status="$2"
+
+  local http_code=$(curl -si "${url}" | head -n 1)
+  local http_status=$(echo "${http_code}" | grep "${status}")
+  if [ "${http_status}" != "" ]
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_pass_if_http_status {
+  local url="$1"
+  local status="$2"
+
+  local http_code=$(curl -si "${url}" | head -n 1)
+  local http_status=$(echo "${http_code}" | grep "${status}")
+  if [ "${http_status}" != "" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_pass_if_url_matches {
+  local url="$1"
+  local str="$2"
+
+  local match=$(curl -s "${url}" | grep "${str}")
+  ocp_pass_if_not_equals "${match}" ''
+}
+
+
+function ocp_success_if_package_in_yum_repo {
+  local pkg="$1"
+
+  print_line ' Checking packages in the classroom yum repositories:'
+  while [ "${pkg}" != "" ]; do
+    pad " · Check package '${pkg}' is available"
+    if yum list "${pkg}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    shift
+    pkg="$1"
+  done
+}
+
+function ocp_install_package {
+  local pkg="$1"
+
+  print_line ' Installing packages:'
+  while [ "${pkg}" != "" ]; do
+    pad " · Install package '${pkg}'"
+    if yum -y install "${pkg}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    shift
+    pkg="$1"
+  done
+}
+
+
+##########################################################################
+## Technology functions: OpenShift
+## Those should be reusable without changes by courses using the
+## same technology
+## Assumptions:
+## - Master node is the 'master' VM
+##########################################################################
+
+
+##########################################################################
+### Functions that run as cluster admin on master
+### they might require the project as an argument
+##########################################################################
+
+
+function ocp_admin_login_on_master {
+  #XXX left here just in case we later find the log in is required
+  #XXX for OCP 3.6 it looks there is no needo to login the token never expires
+  #XXX but unlike previous versions oc login -u system:admin fails asking for a password
+
+  #pad " · PLEASE REVIEW admin_login_on_master AFTER UCF IS FIXED"
+  #print_SUCCESS
+  #print_line
+
+  #ssh root@master oc project default
+  #return
+
+  #if ssh root@master oc login -u system:admin
+  if ssh root@master oc login -u admin -p redhat
+  then
+    ssh root@master oc project default
+    true
+  else
+    print_header
+    fail 'Failed to login as admin on master'
+  fi
+}
+
+
+function ocp_success_if_project_exists {
+  local project="$1"
+  
+  print_line ' Checking pre-requisite projects from previous review labs'
+  while [ "${project}" != '' ]; do
+    pad " · Check if the OpenShift project '${project}' exists"
+    if ssh root@master oc get project "${project}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    shift
+    local project="$1"
+  done
+}
+
+function ocp_delete_project {
+  local project="$1"
+
+  local active=$(ssh root@master oc get project "${project}" | grep Active)
+  if [ "$active" != '' ]
+  then
+    pad " · Delete the OpenShift project '${project}'"
+    if ssh root@master oc delete project "${project}"
+    then
+      print_SUCCESS
+      
+      pad " · Wait for project '${project}' to be really gone"
+      local RETRIES=15
+      while [ "${RETRIES}" != 0 ]; do
+        sleep 3
+        if ssh root@master oc get project "${project}"
+        then
+          # do nothing
+          true
+        else
+          print_SUCCESS
+          break
+        fi
+        let RETRIES=RETRIES-1
+      done
+      if [ "${RETRIES}" = 0 ]; then
+        print_FAIL
+        print_line 'Too many tries, giving up'
+      fi
+      
+    else
+      print_FAIL
+    fi
+  fi
+}
+
+
+function ocp_success_if_pod_is_ready_and_running {
+  local pod="$1"
+  local project="$2"
+  local exclude="$3"
+
+  local get_pod="ssh master oc get pod -n '${project}' | grep -v deploy | grep -v build"
+  local pod_ready=$(${get_pod} | grep "${pod}" | grep Running | grep '1/1')
+  if [ "$exclude" != '' ]; then
+    pod_ready=$(echo ${pod_ready} | grep -v "${exclude}")
+  fi
+  ocp_success_if_not_equals "$pod_ready" ''
+}
+
+
+function ocp_check_all_nodes_ready {
+  local numberOfNodes="$1"
+
+  pad ' · Check all OpenShift nodes are ready'
+  local nodes_ready=$(ssh master oc get nodes | grep 'Ready' | wc -l)
+  ocp_success_if_equals "$nodes_ready" "$numberOfNodes"
+}
+
+
+function ocp_check_default_pods_ready_and_running {
+  pad ' · Check the router pods are ready'
+  ocp_success_if_pod_is_ready_and_running 'router' 'default'
+  pad ' · Check the registry pods are ready'
+  ocp_success_if_pod_is_ready_and_running 'docker-registry' 'default'
+}
+
+
+function ocp_pass_if_user_has_clusterrole {
+  local user="$1"
+  local rolebind="$2"
+
+  local output='{range .userNames[*]}{@}{"\n"}{end}'
+  local users=$(ssh root@master "oc get rolebindings '${rolebind}' -o jsonpath='${output}'" | grep "${user}")
+  ocp_pass_if_not_equals "${users}" ""
+}
+
+
+function ocp_pass_if_group_has_role {
+  local group="$1"
+  local rolebind="$2"
+  local project="$3"
+
+  local output='{range .groupNames[*]}{@}{"\n"}{end}'
+  local grps=$(ssh root@master "oc get rolebindings '${rolebind}' -n '${project}' -o jsonpath='${output}'" | grep "${group}")
+  ocp_pass_if_not_equals "${grps}" ""
+}
+
+
+
+##########################################################################
+### functions that run as developer user on workstation
+### they all assume the current project for the user,
+### set by ocp_login_developer
+##########################################################################
+
+
+function ocp_login_developer {
+
+  if oc login -u developer -p redhat --insecure-skip-tls-verify https://master.lab.example.com
+  then
+    true # do nothing
+  else
+    print_line
+    pad 'Failed to login as the developer user'
+    print_FAIL
+  fi
+}
+
+function ocp_pass_if_project_exists {
+  local project="$1"
+
+  if oc get project "${project}"
+  then
+    if oc project "${project}"
+    then
+      print_PASS
+    else
+      print_FAIL
+      print_line "Failed to enter project '${project}' as the developer user"
+    fi
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_pass_if_bc_points_to_git_repo {
+  local bc="$1"
+  local repo="$2"
+
+  local uri=$(oc get bc "${bc}" -o jsonpath='{.spec.source.git.uri}')
+  if [ "${uri}" = "${repo}" ]
+  then
+    print_PASS
+  else
+    print_FAIL
+    print_line "Build config does not point to '${repo}'"
+  fi
+}
+
+
+function ocp_pass_if_last_build_complete {
+  local bc="$1"
+
+  local last_build=$(oc get build -l "buildconfig=${bc}" -o name | tail -n 1)
+  if [ "${last_build}" != "" ]
+  then
+    local status=$(oc get "${last_build}" -o jsonpath='{.status.phase}')
+    if [ "${status}" = "Complete" ]
+    then
+      print_PASS
+    else
+      print_FAIL
+    fi
+  else
+    print_FAIL
+    print_line "Found no builds from bc '${bc}'"
+  fi
+}
+
+
+function ocp_pod_from_dc {
+  local dc="$1"
+
+  oc get pod -l "deploymentconfig=${dc}" -o name --no-headers
+}
+
+
+function ocp_pass_if_pod_is_ready_and_running {
+  local pod="$1"
+
+  local pod_ready=$(oc get "${pod}" --no-headers | grep Running | grep '1/1')
+  ocp_pass_if_not_equals "${pod_ready}" ''
+}
+
+
+function ocp_pass_if_pod_logs_match {
+  local pod="$1"
+  local str="$2"
+
+  local matches=$(oc logs "${pod}" | grep "${str}")
+  ocp_pass_if_not_equals "${matches}" ''
+}
+
+
+function ocp_pass_if_route_hostname {
+  local route="$1"
+  local hostname="$2"
+
+  local host=$(oc get "route/${route}" -o jsonpath='{.spec.host}')
+  ocp_pass_if_equals "${hostname}" "${host}"
+}
+
+
+function ocp_pass_if_configmap_matches_key_value {
+  local cmap="$1"
+  local key="$2"
+  local value="$3"
+
+  local matches=$(oc get "configmap/${cmap}" -o jsonpath="{.data.${key}}")
+  ocp_pass_if_equals "${matches}" "${value}"
+}
+
+
+function ocp_pass_if_is_points_to_image {
+  local is="$1"
+  local imageurl="$2"
+
+  local imagerepo=$(oc get is "${is}" --no-headers -o jsonpath='{.status.dockerImageRepository}')
+  echo "------ ${imagerepo}"
+  ocp_pass_if_equals "${imagerepo}" "${imageurl}"
+}
+
+
+function ocp_pass_if_is_points_to_image_ext {
+  local is="$1"
+  local project="$2"
+  local imageurl="$3"
+  echo "------ ${imageurl}"
+
+  local imagerepo=$(oc get is "${is}" -n "${project}" -o jsonpath='{.spec.tags[0].from.name}')
+  echo "------ ${imagerepo}"
+  ocp_pass_if_equals "${imagerepo}" "${imageurl}"
+}
+
+
+function ocp_pass_if_dc_points_to_image {
+  local dc="$1"
+  local imageurl="$2"
+
+  local dcimageurl=$(oc get dc "${dc}" -o jsonpath='{.spec.template.spec.containers[0].image}' | awk -F@ '{print $1}')
+  ocp_pass_if_equals "${imageurl}" "${dcimageurl}"
+}
+
+
+
+##########################################################################
+## Course functions: DO288
+## Those should be reusable *with customization* by courses using the
+## same technology
+##########################################################################
+
+
+function ocp_check_all_vms_up {
+  pad ' · services VM is up'
+  ocp_check_vm_up 'services'
+  pad ' · master VM is up'
+  ocp_check_vm_up 'master'
+  pad ' · node1 VM is up'
+  ocp_check_vm_up 'node1'
+  pad ' · node2 VM is up'
+  ocp_check_vm_up 'node2'
+}
+
+
+function ocp_check_openshift_up {
+  ocp_admin_login_on_master
+  print_line ' Checking all VMs are running:'
+  ocp_check_all_vms_up
+  print_line ' Checking the OpenShift cluster is running:'
+  ocp_check_all_nodes_ready 3
+  ocp_check_default_pods_ready_and_running
+}
+
+
+function ocp_check_docker_up {
+  pad ' · Docker is up in workstation'
+  if systemctl is-active docker
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi  
+}
+
+
+function ocp_check_git_repo_exists {
+  local repo="$1"
+
+  print_line ' Checking Git repos are accessible:'
+  while [ "${repo}" != "" ]; do
+    pad " · Access repo '${repo}'"
+    ocp_check_http_status "${git_url}/${repo}" '301 Moved'
+    shift
+    repo="$1"
+  done
+}
+
+
+function ocp_check_nexus_npm {
+  local module="$1"
+
+  print_line ' Checking NPM modules in the classroom nexus:'
+  while [ "${module}" != "" ]; do
+    pad " · Access module '${module}'"
+    ocp_check_http_status "${nexus_node_url}/${module}" '200 OK'
+    shift
+    module="$1"
+  done
+}
+
+
+function ocp_check_nexus_maven {
+  local module="$1"
+
+  print_line ' Checking Maven modules in the classroom nexus:'
+  while [ "${module}" != "" ]; do
+    local short=$(basename ""${module})
+    pad " · Access module '${short}'"
+    ocp_check_http_status "${nexus_maven_url}/${module}" '200 OK'
+    shift
+    module="$1"
+  done
+}
+
+
+function ocp_check_image_exists {
+  local image="$1"
+
+  print_line ' Checking images in the classroom registry:'
+  while [ "${image}" != "" ]; do
+    pad " · List tags for '${image}'"
+    ocp_check_http_status "${reg_url}/v2/${image}/tags/list" '200 OK'
+    shift
+    image="$1"
+  done
+
+}
+
+
+function ocp_pass_if_image_exists {
+  local image="$1"
+  local registry="$2"
+  
+  if [ "${registry}" = "" ]; then
+      registry="${reg_url}"
+  fi
+
+  #XXX this test works if the image was pushed and then deleted
+  #ocp_pass_if_http_status "${registry}/v2/${image}/tags/list" '200 OK'
+  
+  tags=$(curl -s "${registry}/v2/${image}/tags/list" | grep tags | grep -v null | wc -l)
+  ocp_pass_if_not_equals "${tags}" "0"
+}
+
+
+function ocp_create_share {
+  local exports_set="$1"
+  local folder="$2"
+
+  local nfs_share='/var/export'
+
+  print_line " Sharing folders under ${nfs_share}:"
+
+  pad " · Clean all NFS shares from ${COURSE}"
+  ssh root@services "rm -f /etc/exports.d/*-${COURSE}.exports"
+  if ssh root@services exportfs -r
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  local exports_file="/etc/exports.d/${exports_set}-${COURSE}.exports"
+
+  while [ "${folder}" != "" ]; do
+  
+    pad " · Create empty ${folder} folder"
+    ssh root@services rm -rf "${nfs_share}/${folder}"
+    ssh root@services mkdir -p "${nfs_share}/${folder}"
+    ssh root@services chown nfsnobody:nfsnobody "${nfs_share}/${folder}"
+    ssh root@services chmod a+rwx "${nfs_share}/${folder}"
+    print_SUCCESS
+ 
+    pad " · Add ${folder} folder to NFS exports"
+    echo "/var/export/${folder} *(rw,root_squash)" | ssh root@services "cat >> ${exports_file} "
+    print_SUCCESS
+
+    shift
+    folder="$2"
+  done
+
+  pad " · Export new NFS shares"
+  if ssh root@services exportfs -a
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+}
+
+
+function ocp_delete_share {
+  local exports_set="$1"
+  local folder="$2"
+
+  local nfs_share='/var/export'
+  local exports_file="/etc/exports.d/${exports_set}-${COURSE}.exports"
+
+  print_line " Unsharing folders under ${nfs_share}:"
+
+  pad " · Clean NFS shares from ${exports_set}"
+  ssh root@services "rm -rf ${exports_file}"
+  if ssh root@services exportfs -r
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  while [ "${folder}" != "" ]; do
+  
+    pad " · Remove ${folder} folder"
+    ssh root@services rm -rf "${nfs_share}/${folder}"
+    print_SUCCESS
+
+    shift
+    folder="$2"
+  done
+}
+
+
+function ocp_create_pv {
+  local size="$1"
+  shift
+  local pv="$1"
+
+  if oc get pv $@ --no-headers; then
+    ocp_delete_pv $@
+  fi
+  
+  local pvfile='/tmp/pv.yaml'
+  local nfs_share='/var/export'
+  
+  print_line " Creating Persistent Volumes:"
+
+  while [ "${pv}" != "" ]; do
+  
+    pad " · Create PV for ${nfs_share}/${pv}"
+    cat <<EOF-PV > "${pvfile}"
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ${pv}
+spec:
+  capacity:
+    storage: ${size}
+  accessModes:
+  - ReadWriteMany
+  persistentVolumeReclaimPolicy: Recycle
+  nfs:
+    path: ${nfs_share}/${pv}
+    server: services.lab.example.com
+EOF-PV
+
+    if oc create -f "${pvfile}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    
+    shift
+    pv="$1"
+  done
+}
+
+
+function ocp_delete_pv {
+  local pv="$1"
+
+  local nfs_share='/var/export'
+
+  print_line " Deleting Persistent Volumes:"
+
+  while [ "${pv}" != "" ]; do
+  
+    pad " · Delete PV '${pv}' for ${nfs_share}/${pv}"
+    if oc delete pv "${pv}"
+    then
+      print_SUCCESS
+    else
+      print_FAIL
+    fi
+    
+    pad " · Wait for PV '${pv}' to be really gone"
+    local RETRIES=15
+    while [ "${RETRIES}" != 0 ]; do
+      sleep 3
+      if oc get pv "${pv}" --no-headers
+      then
+        # do nothing
+        true
+      else
+        print_SUCCESS
+        break
+      fi
+      let RETRIES=RETRIES-1
+    done
+    if [ "${RETRIES}" = 0 ]; then
+      print_FAIL
+      print_line 'Too many retries, givin up'
+    fi
+       
+    shift
+    pv="$1"
+  done
+}
+
+
+function ocp_success_if_script {
+  script="$1"
+  if bash "${script}"
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+}
+

@@ -1,0 +1,101 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-apache-s2i - grading script for DO288 GE ch05s04
+#
+# SYNOPSIS
+#     lab-apache-s2i {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup or
+#     cleanup for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Wed Jun 12 2019 Richard Allred <rallred@redhat.com>
+#   - Updated for the shared instance classroom and shlib refactoring
+#   * Thu Nov 5 2017 Ravi Srinivasan <rsriniva@redhat.com>
+#   - initial script
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='apache-s2i'
+title='Guided Exercise: Creating an S2I Builder Image'
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+function lab_start {
+
+
+  ocp4_print_prereq_header
+  ocp4_verify_local_clone_exist
+  ocp4_verify_prereq_git_projects 'html-helloworld'
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_fail_if_container_exists 'test'
+  ocp4_is_cluster_up
+
+  ocp4_print_setup_header
+  ocp4_grab_lab_files
+  ocp4_print_setup_footer
+
+}
+
+function lab_finish {
+
+  ocp4_print_cleanup_header
+  ocp4_login_as_developer
+  ocp4_delete_project "${RHT_OCP4_DEV_USER}-${this}"
+
+  local container='test'
+
+  ocp4_delete_stop_container 'test'
+  
+  local image='ubi8/ubi'
+  local builder_image='s2i-do288-httpd'
+  local sample_app='s2i-sample-app'
+
+  ocp4_delete_local_image "${image}" "${builder_image}" "${sample_app}"
+
+ 
+
+  # if skopeo inspect "docker://${registry}/${RHT_OCP4_QUAY_USER}/${builder}"
+  # then
+  #   ocp4_pad "Remove the ${builder} image from the Quay.io registry"
+  #   if skopeo delete "docker://${registry}/${RHT_OCP4_QUAY_USER}/${builder}"
+  #   then
+  #     print_SUCCESS
+  #   else
+  #     print_FAIL
+  # fi
+
+  ocp4_verify_local_clone_clean
+  ocp4_cleanup_lab_files
+
+  print_line
+  print_line 'If you want to perform this exercise again, you need to access quay.io'
+  print_line "and delete your 's2i-do288-httpd' repository."
+  print_line
+
+
+  ocp4_print_cleanup_footer
+
+}
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"

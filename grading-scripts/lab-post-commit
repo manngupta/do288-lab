@@ -1,0 +1,108 @@
+#!/usr/bin/bash
+#
+# Copyright 2019 Red Hat, Inc
+#
+# NAME
+#     lab-post-commit - grading script for DO288 ch04s08 ge
+#
+# SYNOPSIS
+#     lab-post-commit {start|finish}
+#
+#        start   - prepare the system for starting the lab
+#        finish - perform post-lab cleanup
+#
+# DESCRIPTION
+#     This script, based on singular argument, either does setup, grading,
+#     cleanup, or solve for the particular lab of awesomeness.
+#
+# CHANGELOG
+#   * Fri Jun 28 2019 Ivan Chavero <ichavero@redhat.com>
+#   - Refactor for shared cluster
+#   * Wed Nov 08 2017 Douglas Silva <dsilva@redhat.com>
+#   - original code
+
+
+PATH=/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+
+# Initialize and set some variables
+run_as_root='true'
+
+# Required by the do288 shlib
+this='post-commit'
+title='GE: Implementing Post-Commit Build Hooks'
+
+
+# This defines which subcommands are supported (setup, grade, etc.).
+# Corresponding lab_COMMAND functions must be defined.
+declare -a valid_commands=(start finish)
+
+
+function lab_start {
+
+  project="${RHT_OCP4_DEV_USER}-${this}"
+
+
+  ocp4_print_prereq_header
+  
+  ocp4_is_cluster_up
+  ocp4_fail_if_project_exists "${RHT_OCP4_DEV_USER}-${this}"
+  ocp4_check_image_exists 'redhattraining/build-for-managers' "quay.io"
+  ocp4_exit_on_failure
+
+  ocp4_print_setup_header
+  print_line ' Prepare the Guided Exercise'
+  ocp4_grab_lab_files 'no-solution'
+
+  ocp4_login_as_developer
+  ocp4_pad " Create the ${project} project"
+  if oc new-project ${project};
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+
+  ocp4_pad ' Deploy and configure the builds-for-managers application'
+  if oc new-app  --name builds-for-managers --docker-image=quay.io/redhattraining/builds-for-managers \
+    && ocp4_wait "${project}" 'deployment/builds-for-managers'
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp4_pad ' Expose the builds-for-managers application'
+  if  oc expose svc builds-for-managers;
+  then
+    print_SUCCESS
+  else
+    print_FAIL
+  fi
+
+  ocp4_print_setup_footer
+}
+
+function lab_finish {
+
+  project="${RHT_OCP4_DEV_USER}-${this}"
+
+  ocp4_print_cleanup_header
+
+  ocp4_cleanup_lab_files 'no-solution'
+
+  ocp4_login_as_developer
+  #XXX displays nothing if the project does not exist
+  ocp4_delete_project "${project}"
+
+  ocp4_print_cleanup_footer
+}
+
+
+############### Don't EVER change anything below this line ###############
+
+# Source library of functions
+source /usr/local/lib/${function_lib}
+source /usr/local/lib/${platform_lib}
+
+grading_main_program "$@"
